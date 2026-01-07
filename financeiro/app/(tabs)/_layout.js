@@ -1,6 +1,6 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { useTheme } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function TabLayout() {
   const theme = useTheme();
@@ -28,6 +28,18 @@ export default function TabLayout() {
           ),
         }}
       />
+      
+      {/* NOVA ABA ESTATÍSTICAS */}
+      <Tabs.Screen
+        name="statistics"
+        options={{
+          title: 'Análise',
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="chart-pie" size={size} color={color} />
+          ),
+        }}
+      />
+
       <Tabs.Screen
         name="extrato"
         options={{

@@ -1,19 +1,34 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import { getProfiles } from '../database/db';
+import { getProfiles, updateProfileSettings } from '../database/db';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const useFinanceStore = create((set) => ({
+const useFinanceStore = create((set, get) => ({
   profiles: [],
   currentProfile: null,
   refreshKey: 0,
-  themeMode: 'system', // 'system', 'light', 'dark'
+  themeMode: 'system',
 
   loadProfiles: () => {
     const data = getProfiles();
-    set({ profiles: data, currentProfile: data[0] });
+    // Tenta manter o perfil atual se existir
+    const current = get().currentProfile;
+    if (current) {
+        const updatedCurrent = data.find(p => p.id === current.id);
+        set({ profiles: data, currentProfile: updatedCurrent || data[0] });
+    } else {
+        set({ profiles: data, currentProfile: data[0] });
+    }
   },
 
   setCurrentProfile: (profile) => set({ currentProfile: profile }),
+
+  updateProfileConfig: (field, value) => {
+    const { currentProfile, loadProfiles, notifyUpdate } = get();
+    if (!currentProfile) return;
+    updateProfileSettings(currentProfile.id, field, value);
+    loadProfiles(); // Recarrega para atualizar o objeto currentProfile
+    notifyUpdate();
+  },
 
   notifyUpdate: () => set((state) => ({ refreshKey: state.refreshKey + 1 })),
 

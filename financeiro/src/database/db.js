@@ -1,10 +1,10 @@
 import { addMonths } from 'date-fns';
 import * as SQLite from 'expo-sqlite';
 
-const db = SQLite.openDatabaseSync('winfocus_finance_v2.db'); // Mudei o nome para forçar criação de novo banco limpo
+const db = SQLite.openDatabaseSync('winfocus_finance_v3.db'); // v3 para garantir atualização
 
 export const initDB = () => {
-  // Tabela de Perfis
+  // 1. Tabela de Perfis
   db.execSync(`
     CREATE TABLE IF NOT EXISTS profiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,8 +20,33 @@ export const initDB = () => {
     db.execSync(`INSERT INTO profiles (name, type) VALUES ('Negócio', 'business');`);
   }
 
-  // Tabela de Transações Atualizada
-  // Adicionado: repeat_group_id (para agrupar repetições) e repeat_index (1/12, 2/12...)
+  // 2. Tabela de Categorias (NOVO)
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL, -- 'income' ou 'expense'
+      icon TEXT,
+      is_default INTEGER DEFAULT 0
+    );
+  `);
+
+  // Popular categorias iniciais se estiver vazio
+  const categories = db.getAllSync('SELECT * FROM categories');
+  if (categories.length === 0) {
+    // Despesas
+    db.execSync(`INSERT INTO categories (name, type, icon, is_default) VALUES ('Alimentação', 'expense', 'food', 1);`);
+    db.execSync(`INSERT INTO categories (name, type, icon, is_default) VALUES ('Transporte', 'expense', 'bus', 1);`);
+    db.execSync(`INSERT INTO categories (name, type, icon, is_default) VALUES ('Moradia', 'expense', 'home', 1);`);
+    db.execSync(`INSERT INTO categories (name, type, icon, is_default) VALUES ('Lazer', 'expense', 'party-popper', 1);`);
+    db.execSync(`INSERT INTO categories (name, type, icon, is_default) VALUES ('Saúde', 'expense', 'hospital-box', 1);`);
+    // Receitas
+    db.execSync(`INSERT INTO categories (name, type, icon, is_default) VALUES ('Salário', 'income', 'cash', 1);`);
+    db.execSync(`INSERT INTO categories (name, type, icon, is_default) VALUES ('Freelance', 'income', 'laptop', 1);`);
+    db.execSync(`INSERT INTO categories (name, type, icon, is_default) VALUES ('Investimentos', 'income', 'chart-line', 1);`);
+  }
+
+  // 3. Tabela de Transações
   db.execSync(`
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,10 +67,27 @@ export const initDB = () => {
   `);
 };
 
+// --- Funções Auxiliares ---
+
 export const getProfiles = () => db.getAllSync('SELECT * FROM profiles');
 
+// Nova função de Categorias
+export const getCategories = (type) => { // type opcional ('income' ou 'expense')
+    if (type) {
+        return db.getAllSync('SELECT * FROM categories WHERE type = ? ORDER BY name', [type]);
+    }
+    return db.getAllSync('SELECT * FROM categories ORDER BY name');
+};
+
+export const addCategory = (name, type) => {
+    db.runSync(`INSERT INTO categories (name, type, icon, is_default) VALUES (?, ?, 'tag', 0)`, [name, type]);
+};
+
+export const deleteCategory = (id) => {
+    db.runSync(`DELETE FROM categories WHERE id = ? AND is_default = 0`, [id]);
+};
+
 export const getTransactions = (profileId, monthStr) => {
-  // Se monthStr for passado, filtra. Se null, pega tudo (para gestão)
   if (monthStr) {
     return db.getAllSync(
       `SELECT * FROM transactions WHERE profile_id = ? AND strftime('%Y-%m', date) = ? ORDER BY date DESC`,
@@ -55,7 +97,6 @@ export const getTransactions = (profileId, monthStr) => {
   return db.getAllSync(`SELECT * FROM transactions WHERE profile_id = ? ORDER BY date DESC LIMIT 100`, [profileId]);
 };
 
-// Buscar grupos de transações recorrentes para a tela de gestão
 export const getRecurringGroups = (profileId) => {
   return db.getAllSync(`
     SELECT repeat_group_id, description, category, amount, type, COUNT(*) as count, MIN(date) as start_date 
@@ -93,25 +134,16 @@ export const getDashboardTotals = (profileId, monthStr) => {
   return { income, expense, balance: income - expense };
 };
 
-// Nova função de Adicionar com suporte a Repetição
 export const addTransaction = (tx) => {
   const { profile_id, amount, type, category, description, date, expected_date, is_paid, repeat_months = 1 } = tx;
   
   const groupId = repeat_months > 1 ? Date.now().toString() : null;
-  
-  // Converte a string YYYY-MM-DD para objeto Date, garantindo fuso horário local
-  // O split resolve problemas de fuso horário que o new Date() direto pode causar
   const [year, month, day] = date.split('-').map(Number);
   const baseDateObj = new Date(year, month - 1, day); 
 
   for (let i = 0; i < repeat_months; i++) {
-    // Usa date-fns para somar meses corretamente (ex: 31/Jan + 1 mês = 28/Fev)
     const nextDateObj = addMonths(baseDateObj, i);
-    
-    // Formata de volta para YYYY-MM-DD para o SQLite
     const dateStr = nextDateObj.toISOString().split('T')[0];
-
-    // Descrição ex: "Compra (1/3)"
     const desc = repeat_months > 1 ? `${description} (${i + 1}/${repeat_months})` : description;
 
     db.runSync(

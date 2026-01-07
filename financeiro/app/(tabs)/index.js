@@ -75,7 +75,7 @@ export default function Dashboard() {
         <ProfileSelector />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 80 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
         {/* Resumo Financeiro */}
         <View style={styles.cardsContainer}>
           <Card style={[styles.card, { backgroundColor: theme.colors.secondaryContainer }]}>
@@ -180,5 +180,5 @@ const styles = StyleSheet.create({
   miniCard: { flex: 0.48 },
   calendarCard: { marginHorizontal: 16, borderRadius: 12, overflow: 'hidden', elevation: 2 },
   transactionsContainer: { padding: 16 },
-  fab: { position: 'absolute', margin: 16, right: 0, bottom: 0 },
+  fab: { position: 'absolute', margin: 16, right: 0, bottom: 20 },
 });

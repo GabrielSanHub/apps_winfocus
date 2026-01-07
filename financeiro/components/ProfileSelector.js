@@ -63,6 +63,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 12,
+    marginTop: 10,
     // O zIndex ajuda o Menu a sobrepor outros elementos caso haja conflito de layout
     zIndex: 100, 
     elevation: 4, 

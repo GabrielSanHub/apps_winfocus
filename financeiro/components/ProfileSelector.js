@@ -37,7 +37,7 @@ export default function ProfileSelector() {
             textColor={theme.colors.onSurface}
             icon="chevron-down"
             contentStyle={{ flexDirection: 'row-reverse' }}
-            labelStyle={{ fontSize: 18, fontWeight: 'bold' }}
+            labelStyle={{ fontSize: 16, fontWeight: 'bold' }}
           >
             {currentProfile.name}
           </Button>
@@ -62,10 +62,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    marginTop: 10,
+    paddingVertical: 1,
+    marginTop: 30,
     // O zIndex ajuda o Menu a sobrepor outros elementos caso haja conflito de layout
     zIndex: 100, 
-    elevation: 4, 
+    elevation: 2, 
   }
 });

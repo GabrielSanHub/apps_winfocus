@@ -1,9 +1,10 @@
 import React, { useState, useCallback } from 'react';
-import { View, ScrollView, StyleSheet, TouchableOpacity, Alert, Modal, FlatList } from 'react-native';
+import { View, ScrollView, StyleSheet, TouchableOpacity, Alert, Modal, FlatList, Dimensions } from 'react-native';
 import { Text, Card, FAB, useTheme, List, Chip, Divider, IconButton, Portal, Dialog, Button } from 'react-native-paper';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
+import { PieChart } from 'react-native-chart-kit'; // Importando Gráfico
 import { useRouter, useFocusEffect } from 'expo-router';
-import { format } from 'date-fns';
+import { format, addMonths, subMonths, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 import useFinanceStore from '../../src/store/useFinanceStore';
@@ -14,7 +15,7 @@ import {
 } from '../../src/database/db';
 import ProfileSelector from '../../components/ProfileSelector';
 
-// Configuração PT-BR do Calendário
+// Configurações
 LocaleConfig.locales['br'] = {
   monthNames: ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'],
   monthNamesShort: ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'],
@@ -24,76 +25,86 @@ LocaleConfig.locales['br'] = {
 };
 LocaleConfig.defaultLocale = 'br';
 
+const screenWidth = Dimensions.get('window').width;
+
 export default function Dashboard() {
   const theme = useTheme();
   const router = useRouter();
   const { currentProfile, refreshKey, notifyUpdate } = useFinanceStore();
   
-  // Estados de Dados
-  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [data, setData] = useState({ balance: 0, income: {count: 0, total: 0}, expense: {count: 0, total: 0} });
+  // Controle de Data via Header Personalizado
+  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd')); // Data completa selecionada
+  const [viewMonth, setViewMonth] = useState(new Date()); // Objeto Date controlando o Mês visualizado
+
+  // Dados
+  const [data, setData] = useState({ 
+      balance: 0, 
+      income: {total: 0, received: 0, pending: 0, count: 0}, 
+      expense: {total: 0, paid: 0, pending: 0, count: 0} 
+  });
   const [markedDates, setMarkedDates] = useState({});
   const [dayTransactions, setDayTransactions] = useState([]);
   const [overdueItems, setOverdueItems] = useState([]);
 
-  // Estados de Modais
+  // Modals
   const [showForecast, setShowForecast] = useState(false);
+  const [showOverdueModal, setShowOverdueModal] = useState(false);
   const [forecastData, setForecastData] = useState({ income: 0, expense: 0 });
-  const [showDetailsType, setShowDetailsType] = useState(null); // 'income' ou 'expense'
+  const [showDetailsType, setShowDetailsType] = useState(null); 
   const [detailsList, setDetailsList] = useState([]);
 
-  // Carrega dados sempre que a tela ganha foco ou o perfil/refreshKey muda
   useFocusEffect(
     useCallback(() => {
       if (currentProfile) loadData();
-    }, [currentProfile, selectedDate, refreshKey])
+    }, [currentProfile, selectedDate, viewMonth, refreshKey])
   );
 
   const loadData = () => {
-    const monthStr = selectedDate.substring(0, 7); // YYYY-MM
+    // Usamos o mês visualizado no header (viewMonth) para carregar os dados macro
+    const monthStr = format(viewMonth, 'yyyy-MM');
     
-    // 1. Processar Transações Fixas (Garante que existam no mês)
-    processFixedTransactions(currentProfile.id, selectedDate);
+    // Processa fixos para o mês visualizado
+    processFixedTransactions(currentProfile.id, format(viewMonth, 'yyyy-MM-dd'));
 
-    // 2. Dados do Dashboard (Saldo Realizado + Stats do Mês)
     const dashData = getDashboardData(currentProfile.id, monthStr, currentProfile.settings_balance_mode);
     setData(dashData);
 
-    // 3. Previsão (Forecast) para o Modal
     const fore = getForecastData(currentProfile.id, monthStr);
     let fInc = 0, fExp = 0;
     fore.forEach(r => { if(r.type === 'income') fInc = r.total; else fExp = r.total; });
     setForecastData({ income: fInc, expense: fExp });
 
-    // 4. Contas Atrasadas
     setOverdueItems(getOverdueTransactions(currentProfile.id));
 
-    // 5. Calendário (Pontos Coloridos)
+    // Calendário
     const allMonthTrans = getTransactions(currentProfile.id, monthStr);
     const marks = {};
     allMonthTrans.forEach(tr => {
       const dotColor = tr.type === 'income' ? '#4CAF50' : '#F44336';
       if (!marks[tr.date]) marks[tr.date] = { dots: [] };
-      // Limita a 3 dots para não quebrar layout
       if (marks[tr.date].dots.length < 3) marks[tr.date].dots.push({ color: dotColor });
     });
     
-    // Marcação do dia selecionado
-    marks[selectedDate] = { 
-        ...marks[selectedDate], 
-        selected: true, 
-        selectedColor: theme.colors.primary, 
-        selectedTextColor: '#fff' 
-    };
+    // Marca o dia selecionado (apenas se ele pertencer ao mês atual visualizado)
+    if (selectedDate.startsWith(monthStr)) {
+        marks[selectedDate] = { ...marks[selectedDate], selected: true, selectedColor: theme.colors.primary, selectedTextColor: '#fff' };
+    }
     setMarkedDates(marks);
 
-    // 6. Lista de transações do dia selecionado
+    // Carrega lista do dia selecionado
     setDayTransactions(getTransactionsByDate(currentProfile.id, selectedDate));
     
-    // 7. Se o modal de detalhes estiver aberto, atualiza a lista dele também
     if (showDetailsType) {
         setDetailsList(getMonthTransactionsByType(currentProfile.id, monthStr, showDetailsType));
     }
+  };
+
+  // --- Navegação do Mês ---
+  const changeMonth = (direction) => {
+    const newDate = direction === 'next' ? addMonths(viewMonth, 1) : subMonths(viewMonth, 1);
+    setViewMonth(newDate);
+    // Ao mudar mês, seleciona o dia 1 daquele mês por padrão
+    setSelectedDate(format(newDate, 'yyyy-MM-01')); 
   };
 
   const handlePayOverdue = (id) => {
@@ -102,132 +113,213 @@ export default function Dashboard() {
   };
 
   const openTypeDetails = (type) => {
-    const list = getMonthTransactionsByType(currentProfile.id, selectedDate.substring(0, 7), type);
+    const monthStr = format(viewMonth, 'yyyy-MM');
+    const list = getMonthTransactionsByType(currentProfile.id, monthStr, type);
     setDetailsList(list);
     setShowDetailsType(type);
   };
 
-  // Lógica de Toggle (Clicar no ícone de Pago/Recebido na lista detalhada)
   const handleToggleStatus = (item) => {
     toggleTransactionStatus(item.id, item.is_paid);
-    notifyUpdate(); // Recarrega tudo para atualizar saldos
+    notifyUpdate(); 
   };
 
-  // Navegar para edição
   const handleEdit = (item) => {
-    setShowDetailsType(null); // Fecha modal antes de navegar
-    // Passa o ID como parâmetro
+    setShowDetailsType(null); 
     router.push({ pathname: '/add-transaction', params: { id: item.id } });
   };
 
-  if (!currentProfile) return <View style={styles.loading}><Text>Carregando perfil...</Text></View>;
+  // Configuração dos Gráficos Pizza
+  const chartConfig = {
+    color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+  };
+
+  // Gráfico Receita (Verde e Preto/Cinza)
+  const incomeChartData = [
+    { name: 'Recebido', amount: data.income.received, color: '#4CAF50', legendFontColor: '#7F7F7F', legendFontSize: 10 },
+    { name: 'Pendente', amount: data.income.pending, color: '#424242', legendFontColor: '#7F7F7F', legendFontSize: 10 },
+  ];
+
+  // Gráfico Despesa (Vermelho e Preto/Cinza)
+  const expenseChartData = [
+    { name: 'Pago', amount: data.expense.paid, color: '#F44336', legendFontColor: '#7F7F7F', legendFontSize: 10 },
+    { name: 'Pendente', amount: data.expense.pending, color: '#424242', legendFontColor: '#7F7F7F', legendFontSize: 10 },
+  ];
+
+  // Evita crash de gráfico vazio
+  const safeIncomeData = data.income.total > 0 ? incomeChartData : [{name:'-', amount:1, color:'#eee'}];
+  const safeExpenseData = data.expense.total > 0 ? expenseChartData : [{name:'-', amount:1, color:'#eee'}];
+
+  if (!currentProfile) return <View style={styles.loading}><Text>Carregando...</Text></View>;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       
-      {/* Seletor de Perfil no Topo */}
-      <View style={{ backgroundColor: theme.colors.surfaceVariant, paddingBottom: 10 }}>
+      {/* 1. Header Fixo: Perfil e Navegação de Mês */}
+      <View style={{ backgroundColor: theme.colors.surfaceVariant, paddingBottom: 1, elevation: 4, zIndex: 10 }}>
         <ProfileSelector />
+        
+        {/* Navegação de Mês Customizada */}
+        <View style={styles.monthHeader}>
+            <IconButton icon="chevron-left" onPress={() => changeMonth('prev')} />
+            <Text variant="headlineSmall" style={{ fontWeight: 'bold', textTransform: 'capitalize' }}>
+                {format(viewMonth, "MMMM yyyy", { locale: ptBR })}
+            </Text>
+            <IconButton icon="chevron-right" onPress={() => changeMonth('next')} />
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
         
-        {/* Banner de Atrasos (Aparece só se tiver contas vencidas) */}
+        {/* Banner de Atrasos (Se houver) */}
         {overdueItems.length > 0 && (
-            <View style={[styles.overdueContainer, { backgroundColor: theme.colors.errorContainer }]}>
-                <Text style={{ color: theme.colors.onErrorContainer, fontWeight: 'bold', marginBottom: 5 }}>
-                    ! Pagamento Atrasado ({overdueItems.length})
+            <TouchableOpacity onPress={() => setShowOverdueModal(true)} style={[styles.overdueBanner, { backgroundColor: theme.colors.errorContainer }]}>
+                 <Text style={{ color: theme.colors.onErrorContainer, fontWeight: 'bold' }}>
+                    ! Existem {overdueItems.length} contas atrasadas. Toque para ver.
                 </Text>
-                {overdueItems.map(item => (
-                    <TouchableOpacity 
-                        key={item.id} 
-                        onPress={() => Alert.alert("Pagar?", `Confirmar pagamento de ${item.description}?`, [{text: "Não"}, {text: "Sim, Pagar", onPress: () => handlePayOverdue(item.id)}])}
-                    >
-                        <View style={styles.overdueItem}>
-                            <Text style={{flex: 1, color: theme.colors.onErrorContainer}}>
-                                {format(new Date(item.date), 'dd/MM')} - {item.description}
-                            </Text>
-                            <Text style={{fontWeight: 'bold', color: theme.colors.onErrorContainer}}>
-                                R$ {item.amount.toFixed(2)}
-                            </Text>
-                        </View>
-                    </TouchableOpacity>
-                ))}
-            </View>
+            </TouchableOpacity>
         )}
 
-        {/* Cards Principais */}
         <View style={styles.cardsContainer}>
+          
           {/* Card de Saldo */}
           <Card style={[styles.card, { backgroundColor: theme.colors.secondaryContainer }]}>
             <Card.Content>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text variant="labelLarge">Saldo (Realizado)</Text>
-                <TouchableOpacity onPress={() => setShowForecast(true)} style={{flexDirection: 'row', alignItems: 'center'}}>
-                    <IconButton icon="chart-line" size={20} />
-                    <Text variant="labelSmall" style={{textDecorationLine: 'underline'}}>Previsão</Text>
-                </TouchableOpacity>
-              </View>
+              <Text variant="labelLarge">Saldo Disponível (Realizado)</Text>
               <Text variant="displaySmall" style={{ fontWeight: 'bold', color: theme.colors.onSecondaryContainer }}>
                 R$ {data.balance.toFixed(2)}
               </Text>
-              <Text variant="labelSmall" style={{ opacity: 0.6 }}>
-                {currentProfile.settings_balance_mode === 'accumulated' ? 'Acumulado Total' : 'Fluxo do Mês'}
-              </Text>
+              
+              <Divider style={{ marginVertical: 10, backgroundColor: theme.colors.outlineVariant }} />
+              
+              <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+                  <TouchableOpacity onPress={() => setShowForecast(true)} style={styles.linkButton}>
+                        <Text style={{ textDecorationLine: 'underline', color: theme.colors.primary }}>Ver Previsão</Text>
+                  </TouchableOpacity>
+                  
+                  {/* Link Atrasadas */}
+                  <TouchableOpacity onPress={() => setShowOverdueModal(true)} style={styles.linkButton}>
+                        <Text style={{ textDecorationLine: 'underline', color: theme.colors.error }}>
+                            Ver Atrasadas ({overdueItems.length})
+                        </Text>
+                  </TouchableOpacity>
+              </View>
             </Card.Content>
           </Card>
           
-          {/* Cards de Receita e Despesa (Clicáveis) */}
-          <View style={styles.rowCards}>
-            <TouchableOpacity style={[styles.miniCardTouch, { backgroundColor: '#E8F5E9' }]} onPress={() => openTypeDetails('income')}>
-              <View style={{ padding: 16 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={{ color: '#2E7D32' }}>Receitas</Text>
-                    <Chip compact textStyle={{fontSize: 10}}>{data.income.count} itens</Chip>
+          {/* Card Receita (Full Width + Gráfico à Direita) */}
+          <Card style={[styles.card, { backgroundColor: '#E8F5E9' }]} onPress={() => openTypeDetails('income')}>
+            <Card.Content style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {/* Texto Esquerda */}
+                <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5 }}>
+                        <Text variant="titleMedium" style={{ color: '#2E7D32', fontWeight: 'bold' }}>Receitas</Text>
+                        <Chip compact style={{ marginLeft: 8, backgroundColor: '#C8E6C9' }} textStyle={{fontSize: 10}}>{data.income.count} itens</Chip>
+                    </View>
+                    
+                    <Text variant="labelMedium">Total: <Text style={{fontWeight:'bold'}}>R$ {data.income.total.toFixed(2)}</Text></Text>
+                    <Text variant="labelMedium" style={{color: '#2E7D32'}}>Recebido: <Text style={{fontWeight:'bold'}}>R$ {data.income.received.toFixed(2)}</Text></Text>
+                    <Text variant="labelMedium" style={{color: '#424242'}}>A Receber: R$ {data.income.pending.toFixed(2)}</Text>
                 </View>
-                <Text variant="titleMedium" style={{ marginTop: 5 }}>R$ {data.income.total.toFixed(2)}</Text>
-              </View>
-            </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.miniCardTouch, { backgroundColor: '#FFEBEE' }]} onPress={() => openTypeDetails('expense')}>
-              <View style={{ padding: 16 }}>
-                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={{ color: '#C62828' }}>Despesas</Text>
-                    <Chip compact textStyle={{fontSize: 10}}>{data.expense.count} itens</Chip>
+                {/* Gráfico Direita */}
+                <View>
+                    <PieChart
+                        data={safeIncomeData}
+                        width={100}
+                        height={100}
+                        chartConfig={chartConfig}
+                        accessor={"amount"}
+                        backgroundColor={"transparent"}
+                        paddingLeft={"15"}
+                        center={[0, 0]}
+                        hasLegend={false}
+                    />
                 </View>
-                <Text variant="titleMedium" style={{ marginTop: 5 }}>R$ {data.expense.total.toFixed(2)}</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
+            </Card.Content>
+          </Card>
+
+          {/* Card Despesa (Full Width + Gráfico à Esquerda) */}
+          <Card style={[styles.card, { backgroundColor: '#FFEBEE' }]} onPress={() => openTypeDetails('expense')}>
+             <Card.Content style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {/* Gráfico Esquerda */}
+                <View style={{ marginRight: 10 }}>
+                    <PieChart
+                        data={safeExpenseData}
+                        width={100}
+                        height={100}
+                        chartConfig={chartConfig}
+                        accessor={"amount"}
+                        backgroundColor={"transparent"}
+                        paddingLeft={"15"}
+                        center={[0, 0]}
+                        hasLegend={false}
+                    />
+                </View>
+
+                {/* Texto Direita */}
+                <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5 }}>
+                        <Chip compact style={{ marginRight: 8, backgroundColor: '#FFCDD2' }} textStyle={{fontSize: 10}}>{data.expense.count} itens</Chip>
+                        <Text variant="titleMedium" style={{ color: '#C62828', fontWeight: 'bold' }}>Despesas</Text>
+                    </View>
+                    
+                    <Text variant="labelMedium">Total: <Text style={{fontWeight:'bold'}}>R$ {data.expense.total.toFixed(2)}</Text></Text>
+                    <Text variant="labelMedium" style={{color: '#C62828'}}>Pago: <Text style={{fontWeight:'bold'}}>R$ {data.expense.paid.toFixed(2)}</Text></Text>
+                    <Text variant="labelMedium" style={{color: '#424242'}}>A Pagar: R$ {data.expense.pending.toFixed(2)}</Text>
+                </View>
+            </Card.Content>
+          </Card>
+
         </View>
 
-        {/* Calendário */}
+        {/* Calendário (Sem Header Padrão) */}
         <Card style={styles.calendarCard}>
           <Calendar
-            current={selectedDate}
-            onDayPress={day => setSelectedDate(day.dateString)}
-            onMonthChange={month => setSelectedDate(month.dateString)}
+            // Usa a data do header (viewMonth) como referência
+            current={format(viewMonth, 'yyyy-MM-dd')} 
+            
+            // Oculta o header padrão pois criamos um customizado no topo
+            renderHeader={() => null} 
+            
+            onDayPress={day => {
+                // Se clicar num dia de outro mês, muda a view também
+                const dayDate = new Date(day.timestamp); // ajustado para evitar timezone bug básico
+                const dayStr = day.dateString;
+                
+                if (dayStr.substring(0,7) !== format(viewMonth, 'yyyy-MM')) {
+                    setViewMonth(new Date(dayStr));
+                }
+                setSelectedDate(dayStr);
+            }}
             markingType={'multi-dot'}
             markedDates={markedDates}
             theme={{
               calendarBackground: theme.colors.surface,
               textSectionTitleColor: theme.colors.onSurface,
               dayTextColor: theme.colors.onSurface,
-              monthTextColor: theme.colors.onSurface,
               todayTextColor: theme.colors.primary,
+              selectedDayBackgroundColor: theme.colors.primary,
               arrowColor: theme.colors.primary,
+              // Oculta header também por tema para garantir
+              'stylesheet.calendar.header': {
+                header: {
+                    height: 0,
+                    opacity: 0
+                }
+              }
             }}
           />
         </Card>
 
-        {/* Lista de Movimentações do Dia Selecionado */}
+        {/* Lista do Dia */}
         <View style={styles.transactionsContainer}>
           <Text variant="titleMedium" style={{ marginBottom: 10 }}>
-            Movimentações em {format(new Date(selectedDate), "dd/MM")}
+            Movimentações em {format(new Date(selectedDate), "dd 'de' MMMM", { locale: ptBR })}
           </Text>
           {dayTransactions.length === 0 ? (
             <Text style={{ textAlign: 'center', color: theme.colors.outline, marginTop: 10 }}>
-              Nada lançado neste dia.
+              Nenhuma movimentação neste dia.
             </Text>
           ) : (
             dayTransactions.map((item) => (
@@ -235,7 +327,7 @@ export default function Dashboard() {
                 key={item.id}
                 title={item.description || item.category}
                 description={item.category}
-                onPress={() => handleEdit(item)} // Clique rápido para editar
+                onPress={() => handleEdit(item)}
                 left={props => <List.Icon {...props} icon={item.type === 'income' ? 'arrow-up-circle' : 'arrow-down-circle'} color={item.type === 'income' ? 'green' : 'red'} />}
                 right={() => (
                   <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
@@ -243,7 +335,6 @@ export default function Dashboard() {
                       R$ {item.amount.toFixed(2)}
                     </Text>
                     {item.is_paid === 0 && <Chip textStyle={{fontSize: 10}} style={{height: 20}}>Pendente</Chip>}
-                    {item.is_fixed === 1 && <Chip icon="pin" textStyle={{fontSize: 10}} style={{height: 20, marginTop: 2}}>Fixo</Chip>}
                   </View>
                 )}
                 style={{ backgroundColor: theme.colors.surface, marginBottom: 5, borderRadius: 8 }}
@@ -253,91 +344,74 @@ export default function Dashboard() {
         </View>
       </ScrollView>
 
-      {/* Botão Flutuante (FAB) */}
-      <FAB
-        icon="plus"
-        label="Lançar"
-        style={[styles.fab, { backgroundColor: theme.colors.primary }]}
-        color="white"
-        onPress={() => router.push('/add-transaction')}
-      />
+      <FAB icon="plus" label="Lançar" style={[styles.fab, { backgroundColor: theme.colors.primary }]} color="white" onPress={() => router.push('/add-transaction')} />
 
-      {/* Modal de Previsão */}
+      {/* Modal Previsão */}
       <Portal>
         <Dialog visible={showForecast} onDismiss={() => setShowForecast(false)}>
-            <Dialog.Title>Previsão do Mês</Dialog.Title>
+            <Dialog.Title>Previsão {format(viewMonth, 'MMMM')}</Dialog.Title>
             <Dialog.Content>
-                <Text>Considerando todos os lançamentos (pagos e pendentes) deste mês:</Text>
+                <Text>Valores projetados (Pago + Pendente):</Text>
                 <Divider style={{ marginVertical: 10 }} />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={{ color: 'green' }}>Receita Prevista:</Text>
-                    <Text style={{ fontWeight: 'bold' }}>R$ {forecastData.income.toFixed(2)}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
-                    <Text style={{ color: 'red' }}>Despesa Prevista:</Text>
-                    <Text style={{ fontWeight: 'bold' }}>R$ {forecastData.expense.toFixed(2)}</Text>
-                </View>
+                <View style={styles.rowBetween}><Text style={{ color: 'green' }}>Receita Total:</Text><Text>R$ {forecastData.income.toFixed(2)}</Text></View>
+                <View style={styles.rowBetween}><Text style={{ color: 'red' }}>Despesa Total:</Text><Text>R$ {forecastData.expense.toFixed(2)}</Text></View>
                 <Divider style={{ marginVertical: 10 }} />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text>Saldo Previsto:</Text>
-                    <Text style={{ fontWeight: 'bold' }}>R$ {(forecastData.income - forecastData.expense).toFixed(2)}</Text>
-                </View>
+                <View style={styles.rowBetween}><Text>Saldo Projetado:</Text><Text style={{fontWeight:'bold'}}>R$ {(forecastData.income - forecastData.expense).toFixed(2)}</Text></View>
             </Dialog.Content>
-            <Dialog.Actions>
-                <Button onPress={() => setShowForecast(false)}>Fechar</Button>
-            </Dialog.Actions>
+            <Dialog.Actions><Button onPress={() => setShowForecast(false)}>Ok</Button></Dialog.Actions>
         </Dialog>
       </Portal>
 
-      {/* Modal de Lista Detalhada (Gestão de Pagamentos) */}
+      {/* Modal Atrasadas */}
+      <Modal visible={showOverdueModal} animationType="slide" transparent={true} onRequestClose={() => setShowOverdueModal(false)}>
+        <View style={styles.modalFull}>
+            <View style={[styles.modalBody, { backgroundColor: theme.colors.background }]}>
+                <Text variant="headlineSmall" style={{ padding: 16, color: theme.colors.error }}>Contas Atrasadas</Text>
+                {overdueItems.length === 0 ? <Text style={{padding:20}}>Nenhuma conta atrasada.</Text> : (
+                    <FlatList
+                        data={overdueItems}
+                        keyExtractor={item => item.id.toString()}
+                        renderItem={({item}) => (
+                            <List.Item
+                                title={item.description}
+                                description={`Venceu em: ${format(new Date(item.date), 'dd/MM/yyyy')}`}
+                                left={props => <List.Icon {...props} icon="alert-circle" color="red" />}
+                                right={() => <Button mode="contained-tonal" compact onPress={() => { handlePayOverdue(item.id); setShowOverdueModal(false); }}>Pagar</Button>}
+                            />
+                        )}
+                    />
+                )}
+                <Button onPress={() => setShowOverdueModal(false)} style={{ margin: 16 }}>Fechar</Button>
+            </View>
+        </View>
+      </Modal>
+
+      {/* Modal Lista Detalhada (Inalterado) */}
       <Modal visible={!!showDetailsType} animationType="slide" transparent={true} onRequestClose={() => setShowDetailsType(null)}>
         <View style={styles.modalFull}>
             <View style={[styles.modalBody, { backgroundColor: theme.colors.background }]}>
                 <Text variant="headlineSmall" style={{ padding: 16 }}>
-                    {showDetailsType === 'income' ? 'Receitas' : 'Despesas'} - Gerenciar
+                    {showDetailsType === 'income' ? 'Receitas' : 'Despesas'} do Mês
                 </Text>
-                
                 <FlatList
                     data={detailsList}
                     keyExtractor={item => item.id.toString()}
                     renderItem={({item}) => {
-                        // Lógica de Ícones
                         const isPaid = item.is_paid === 1;
-                        // Se Receita: Pago = Check Verde. Não Pago = Outline.
-                        // Se Despesa: Pago = Check Vermelho. Não Pago = Outline.
+                        let iconName = isPaid ? 'cash-check' : 'checkbox-blank-circle-outline';
+                        let iconColor = isPaid ? (item.type==='income'?'green':'red') : theme.colors.outline;
                         
-                        let iconName = 'checkbox-blank-circle-outline';
-                        let iconColor = theme.colors.outline;
-                        
-                        if (isPaid) {
-                            iconName = 'cash-check'; 
-                            iconColor = item.type === 'income' ? 'green' : 'red';
-                        }
-
                         return (
                             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, backgroundColor: theme.colors.surface, marginBottom: 1, paddingVertical: 8 }}>
-                                {/* Botão de Toggle Status */}
                                 <TouchableOpacity onPress={() => handleToggleStatus(item)} style={{ padding: 8, alignItems: 'center' }}>
-                                    <IconButton 
-                                        icon={iconName} 
-                                        iconColor={iconColor} 
-                                        size={28} 
-                                        style={{ margin: 0 }}
-                                    />
-                                    <Text style={{ fontSize: 10, textAlign: 'center', color: iconColor }}>
-                                        {isPaid ? (item.type==='income'?'Recebido':'Pago') : (item.type==='income'?'Receber':'Pagar')}
-                                    </Text>
+                                    <IconButton icon={iconName} iconColor={iconColor} size={28} style={{ margin: 0 }} />
+                                    <Text style={{ fontSize: 9, color: iconColor }}>{isPaid ? 'Ok' : 'Pago'}</Text>
                                 </TouchableOpacity>
-
-                                {/* Dados da Transação */}
                                 <View style={{ flex: 1, marginLeft: 8 }}>
                                     <Text variant="bodyLarge" style={{ fontWeight: 'bold' }}>{item.description}</Text>
                                     <Text variant="bodySmall">{format(new Date(item.date), 'dd/MM')} - {item.category}</Text>
                                 </View>
-
                                 <Text style={{ fontWeight: 'bold', marginRight: 10 }}>R$ {item.amount.toFixed(2)}</Text>
-
-                                {/* Botão Editar */}
                                 <IconButton icon="pencil" size={20} onPress={() => handleEdit(item)} />
                             </View>
                         );
@@ -356,15 +430,15 @@ export default function Dashboard() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  monthHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 5 },
   cardsContainer: { padding: 16 },
-  card: { marginBottom: 10 },
-  rowCards: { flexDirection: 'row', justifyContent: 'space-between' },
-  miniCardTouch: { flex: 0.48, borderRadius: 12, overflow: 'hidden' },
+  card: { marginBottom: 12 },
   calendarCard: { marginHorizontal: 16, borderRadius: 12, overflow: 'hidden', elevation: 2 },
   transactionsContainer: { padding: 16 },
   fab: { position: 'absolute', margin: 16, right: 0, bottom: 20 },
-  overdueContainer: { padding: 10, margin: 16, borderRadius: 8 },
-  overdueItem: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  overdueBanner: { padding: 10, marginHorizontal: 16, marginTop: 10, borderRadius: 8, alignItems: 'center' },
+  linkButton: { padding: 5 },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
   modalFull: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalBody: { height: '80%', borderTopLeftRadius: 20, borderTopRightRadius: 20 }
+  modalBody: { height: '85%', borderTopLeftRadius: 20, borderTopRightRadius: 20 }
 });

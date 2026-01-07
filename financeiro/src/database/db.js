@@ -137,10 +137,12 @@ export const processFixedTransactions = (profileId, dateReference) => {
 
 export const getDashboardData = (profileId, monthStr, balanceMode) => {
     const today = new Date().toISOString().split('T')[0];
+    
+    // 1. CÁLCULO DO SALDO (Disponível/Realizado)
     let balanceQuery = `SELECT type, SUM(amount) as total FROM transactions WHERE profile_id = ?`;
     let balanceParams = [profileId];
-
-    // Saldo considera: Data <= Hoje OU Marcado como Pago
+    
+    // Saldo: Data <= Hoje OU Marcado como Pago
     let whereBalance = ` AND (date <= ? OR is_paid = 1)`; 
     
     if (balanceMode === 'monthly') {
@@ -150,36 +152,42 @@ export const getDashboardData = (profileId, monthStr, balanceMode) => {
         balanceParams.push(today);
     }
     
-    const balanceResult = db.getAllSync(
-        balanceQuery + whereBalance + ` GROUP BY type`,
-        balanceParams
-    );
-
-    // Cards mostram TUDO do mês (Fluxo de Caixa Previsto)
-    const statsResult = db.getAllSync(
-        `SELECT type, COUNT(*) as count, SUM(amount) as total 
-         FROM transactions 
-         WHERE profile_id = ? AND strftime('%Y-%m', date) = ? 
-         GROUP BY type`,
-        [profileId, monthStr]
-    );
-
+    const balanceResult = db.getAllSync(balanceQuery + whereBalance + ` GROUP BY type`, balanceParams);
     let realizedBalance = 0;
     balanceResult.forEach(r => realizedBalance += (r.type === 'income' ? r.total : -r.total));
 
-    let incomeStats = { count: 0, total: 0 };
-    let expenseStats = { count: 0, total: 0 };
+    // 2. DETALHAMENTO DO MÊS (Para os Cards Expandidos e Gráficos)
+    // Busca soma agrupada por tipo e status (pago ou não)
+    const breakdown = db.getAllSync(
+        `SELECT type, is_paid, SUM(amount) as total, COUNT(*) as count
+         FROM transactions 
+         WHERE profile_id = ? AND strftime('%Y-%m', date) = ? 
+         GROUP BY type, is_paid`,
+        [profileId, monthStr]
+    );
 
-    statsResult.forEach(r => {
-        if (r.type === 'income') incomeStats = { count: r.count, total: r.total };
-        if (r.type === 'expense') expenseStats = { count: r.count, total: r.total };
+    // Inicializa estrutura
+    let income = { total: 0, received: 0, pending: 0, count: 0 };
+    let expense = { total: 0, paid: 0, pending: 0, count: 0 };
+
+    breakdown.forEach(row => {
+        const val = row.total || 0;
+        const qtd = row.count || 0;
+
+        if (row.type === 'income') {
+            income.total += val;
+            income.count += qtd;
+            if (row.is_paid === 1) income.received += val;
+            else income.pending += val;
+        } else if (row.type === 'expense') {
+            expense.total += val;
+            expense.count += qtd;
+            if (row.is_paid === 1) expense.paid += val;
+            else expense.pending += val;
+        }
     });
 
-    return { 
-        balance: realizedBalance, 
-        income: incomeStats, 
-        expense: expenseStats 
-    };
+    return { balance: realizedBalance, income, expense };
 };
 
 export const getOverdueTransactions = (profileId) => {

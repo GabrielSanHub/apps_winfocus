@@ -1,12 +1,12 @@
 // app/index.js
-import React, { useEffect, useState } from 'react';
-import { View, FlatList, StyleSheet, Alert, Platform } from 'react-native';
-import { Appbar, TextInput, Button, Card, Text } from 'react-native-paper';
-import { useTaskStore } from '../src/store/useTaskStore';
+import { useEffect, useState } from 'react';
+import { Alert, FlatList, Platform, StyleSheet, View } from 'react-native';
+import { Appbar, Button, Card, Text, TextInput } from 'react-native-paper';
+import useFinanceStore from '../src/store/useFinanceStore';
 
 export default function Home() {
   // Pega as funções e o estado do nosso Store (Zustand)
-  const { tasks, loadTasks, addNewTask } = useTaskStore();
+  const { tasks, loadTasks, addNewTask } = useFinanceStore();
   const [text, setText] = useState(''); // Estado local para o input
 
   // useEffect: Roda uma vez quando a tela abre

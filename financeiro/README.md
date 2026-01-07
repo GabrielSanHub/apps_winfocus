@@ -140,3 +140,9 @@ Se alguém perguntar "como esse app funciona?", aqui está a resposta técnica:
 3. Estado Global: Gerenciado pelo Zustand. Ele evita o "prop drilling" (passar dados de pai para filho infinitamente). É ele quem chama o banco de dados e atualiza a tela.
 4. Persistência Local: Usa Expo SQLite. Os dados ficam salvos no aparelho do usuário, funcionando 100% offline.
 5. Sincronização: Quando há internet, o app envia os dados locais para um backend Node.js/Express via requisição HTTP POST.
+
+# console 1
+npx expo start --clear
+
+# console 2
+node backend/server.js

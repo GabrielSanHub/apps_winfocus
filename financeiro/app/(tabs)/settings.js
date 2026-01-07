@@ -6,7 +6,7 @@ import { getRecurringAndFixedGroups, deleteTransactionGroup, getCategories, addC
 
 export default function Settings() {
   const theme = useTheme();
-  const { themeMode, setThemeMode, currentProfile, refreshKey, notifyUpdate, updateProfileConfig } = useFinanceStore();
+  const { themeMode, setThemeMode, currentProfile, setCurrentProfile, profiles, refreshKey, notifyUpdate, updateProfileConfig } = useFinanceStore();  
   
   const [recurringGroups, setRecurringGroups] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -29,7 +29,7 @@ export default function Settings() {
     }
   };
 
-const handleDeleteGroup = (groupId) => {
+  const handleDeleteGroup = (groupId) => {
     Alert.alert(
       "Parar Recorrência",
       "Isso apagará apenas os lançamentos FUTUROS ou pendentes. Histórico pago será mantido.",
@@ -80,10 +80,44 @@ const handleDeleteGroup = (groupId) => {
     notifyUpdate();
   };
 
+    const handleSwitchProfileType = (type) => {
+    // Encontra o primeiro perfil que corresponda ao tipo (personal ou business)
+    const targetProfile = profiles.find(p => p.type === type);
+    if (targetProfile) {
+        setCurrentProfile(targetProfile);
+        notifyUpdate();
+    } else {
+        Alert.alert("Aviso", `Nenhum perfil do tipo '${type === 'personal' ? 'Pessoal' : 'Empresa'}' encontrado.`);
+    }
+  };
+
   return (
     <View style={{ flex: 1 }}>
     <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
       
+    {/* NOVO SELETOR DE PERFIL (PESSOAL | EMPRESA) */}
+      <View style={{ padding: 16 }}>
+        <Text variant="titleMedium" style={{ marginBottom: 10, textAlign: 'center' }}>Perfil Ativo</Text>
+        <SegmentedButtons
+          value={currentProfile?.type || 'personal'}
+          onValueChange={handleSwitchProfileType}
+          buttons={[
+            {
+              value: 'personal',
+              label: 'Pessoal',
+              icon: 'account',
+            },
+            {
+              value: 'business',
+              label: 'Empresa',
+              icon: 'briefcase',
+            },
+          ]}
+        />
+      </View>
+
+      <Divider />
+
       <List.Section>
         <List.Subheader>Preferências ({currentProfile?.name})</List.Subheader>
         <List.Item

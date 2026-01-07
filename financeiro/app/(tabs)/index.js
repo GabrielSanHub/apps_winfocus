@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, TouchableOpacity, Alert, Modal, FlatList, Dimensions } from 'react-native';
-import { Text, Card, FAB, useTheme, List, Chip, Divider, IconButton, Portal, Dialog, Button } from 'react-native-paper';
+import { Text, Card, FAB, useTheme, List, Chip, Divider, IconButton, Portal, Dialog, Button, SegmentedButtons } from 'react-native-paper';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import { PieChart } from 'react-native-chart-kit'; // Importando Gráfico
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -13,7 +13,6 @@ import {
     processFixedTransactions, getOverdueTransactions, markAsPaid, 
     getForecastData, getMonthTransactionsByType, toggleTransactionStatus 
 } from '../../src/database/db';
-import ProfileSelector from '../../components/ProfileSelector';
 
 // Configurações
 LocaleConfig.locales['br'] = {
@@ -37,10 +36,11 @@ export default function Dashboard() {
   const [viewMonth, setViewMonth] = useState(new Date()); // Objeto Date controlando o Mês visualizado
 
   // Dados
-  const [data, setData] = useState({ 
+const [data, setData] = useState({ 
       balance: 0, 
       income: {total: 0, received: 0, pending: 0, count: 0}, 
-      expense: {total: 0, paid: 0, pending: 0, count: 0} 
+      expense: {total: 0, paid: 0, pending: 0, count: 0},
+      counts: { incPaid: 0, incPend: 0, expPaid: 0, expPend: 0 }
   });
   const [markedDates, setMarkedDates] = useState({});
   const [dayTransactions, setDayTransactions] = useState([]);
@@ -78,6 +78,17 @@ export default function Dashboard() {
 
     // Calendário
     const allMonthTrans = getTransactions(currentProfile.id, monthStr);
+    
+    const counts = {
+        incPaid: allMonthTrans.filter(t => t.type === 'income' && t.is_paid).length,
+        incPend: allMonthTrans.filter(t => t.type === 'income' && !t.is_paid).length,
+        expPaid: allMonthTrans.filter(t => t.type === 'expense' && t.is_paid).length,
+        expPend: allMonthTrans.filter(t => t.type === 'expense' && !t.is_paid).length,
+    };
+
+    // Atualiza o estado mesclando os dados do dashboard com as contagens
+    setData({ ...dashData, counts });
+
     const marks = {};
     allMonthTrans.forEach(tr => {
       const dotColor = tr.type === 'income' ? '#4CAF50' : '#F44336';
@@ -134,16 +145,43 @@ export default function Dashboard() {
     color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
   };
 
-  // Gráfico Receita (Verde e Preto/Cinza)
+  const labelColor = theme.colors.onSurface;
+
+// Gráfico Receita
   const incomeChartData = [
-    { name: 'Recebido', amount: data.income.received, color: '#4CAF50', legendFontColor: '#7F7F7F', legendFontSize: 10 },
-    { name: 'Pendente', amount: data.income.pending, color: '#424242', legendFontColor: '#7F7F7F', legendFontSize: 10 },
+    { 
+        // Adiciona (x) ao nome. A porcentagem é adicionada automaticamente pelo gráfico
+        name: `Recebido (${data.counts?.incPaid || 0})`, 
+        amount: data.income.received, 
+        color: '#4CAF50', 
+        legendFontColor: labelColor, 
+        legendFontSize: 12 
+    },
+    { 
+        name: `Pendente (${data.counts?.incPend || 0})`, 
+        amount: data.income.pending, 
+        color: theme.dark ? '#B0BEC5' : '#E0E0E0', // Cinza claro para contraste no modo claro/escuro
+        legendFontColor: labelColor, 
+        legendFontSize: 12 
+    },
   ];
 
-  // Gráfico Despesa (Vermelho e Preto/Cinza)
+// Gráfico Despesa
   const expenseChartData = [
-    { name: 'Pago', amount: data.expense.paid, color: '#F44336', legendFontColor: '#7F7F7F', legendFontSize: 10 },
-    { name: 'Pendente', amount: data.expense.pending, color: '#424242', legendFontColor: '#7F7F7F', legendFontSize: 10 },
+    { 
+        name: `Pago (${data.counts?.expPaid || 0})`, 
+        amount: data.expense.paid, 
+        color: '#F44336', 
+        legendFontColor: labelColor, 
+        legendFontSize: 12 
+    },
+    { 
+        name: `Pendente (${data.counts?.expPend || 0})`, 
+        amount: data.expense.pending, 
+        color: theme.dark ? '#B0BEC5' : '#E0E0E0', 
+        legendFontColor: labelColor, 
+        legendFontSize: 12 
+    },
   ];
 
   // Evita crash de gráfico vazio
@@ -156,8 +194,7 @@ export default function Dashboard() {
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       
       {/* 1. Header Fixo: Perfil e Navegação de Mês */}
-      <View style={{ backgroundColor: theme.colors.surfaceVariant, paddingBottom: 1, elevation: 4, zIndex: 10 }}>
-        <ProfileSelector />
+      <View style={{ backgroundColor: theme.colors.surfaceVariant, paddingTop: 20, paddingBottom: 1, elevation: 4, zIndex: 10 }}>
         
         {/* Navegação de Mês Customizada */}
         <View style={styles.monthHeader}>
@@ -182,91 +219,161 @@ export default function Dashboard() {
 
         <View style={styles.cardsContainer}>
           
-          {/* Card de Saldo */}
+{/* Card de Saldo */}
           <Card style={[styles.card, { backgroundColor: theme.colors.secondaryContainer }]}>
-            <Card.Content>
-              <Text variant="labelLarge">Saldo Disponível (Realizado)</Text>
-              <Text variant="displaySmall" style={{ fontWeight: 'bold', color: theme.colors.onSecondaryContainer }}>
-                R$ {data.balance.toFixed(2)}
-              </Text>
+            {/* 1. Redução do padding vertical para compactar a altura */}
+            <Card.Content style={{ paddingVertical: 12 }}>
               
-              <Divider style={{ marginVertical: 10, backgroundColor: theme.colors.outlineVariant }} />
-              
-              <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
-                  <TouchableOpacity onPress={() => setShowForecast(true)} style={styles.linkButton}>
-                        <Text style={{ textDecorationLine: 'underline', color: theme.colors.primary }}>Ver Previsão</Text>
-                  </TouchableOpacity>
+              <View style={{ alignItems: 'center' }}>
+                  <Text variant="labelLarge" style={{ marginBottom: 4 }}>Saldo Disponível (Realizado)</Text>
                   
-                  {/* Link Atrasadas */}
-                  <TouchableOpacity onPress={() => setShowOverdueModal(true)} style={styles.linkButton}>
-                        <Text style={{ textDecorationLine: 'underline', color: theme.colors.error }}>
-                            Ver Atrasadas ({overdueItems.length})
-                        </Text>
-                  </TouchableOpacity>
+                  {/* 2. Texto do valor levemente reduzido (de displaySmall para headlineLarge) */}
+                  <Text variant="headlineLarge" style={{ fontWeight: 'bold', color: theme.colors.onSecondaryContainer }}>
+                    R$ {data.balance.toFixed(2)}
+                  </Text>
+              </View>
+              
+              {/* Divider com margem reduzida */}
+              <Divider style={{ marginVertical: 8, backgroundColor: theme.colors.outlineVariant }} />
+              
+              {/* Botões (já com a lógica de ícones implementada anteriormente) */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+                  <Button 
+                    mode="text" 
+                    icon="chart-line" 
+                    compact 
+                    onPress={() => setShowForecast(true)}
+                  >
+                    Ver Previsão
+                  </Button>
+                  
+                  <Button 
+                    mode="text" 
+                    icon="clock-alert-outline" 
+                    compact 
+                    textColor={theme.colors.error} 
+                    onPress={() => setShowOverdueModal(true)}
+                  >
+                    Atrasadas ({overdueItems.length})
+                  </Button>
               </View>
             </Card.Content>
           </Card>
           
-          {/* Card Receita (Full Width + Gráfico à Direita) */}
-          <Card style={[styles.card, { backgroundColor: '#E8F5E9' }]} onPress={() => openTypeDetails('income')}>
-            <Card.Content style={{ flexDirection: 'row', alignItems: 'center' }}>
-                {/* Texto Esquerda */}
-                <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5 }}>
-                        <Text variant="titleMedium" style={{ color: '#2E7D32', fontWeight: 'bold' }}>Receitas</Text>
-                        <Chip compact style={{ marginLeft: 8, backgroundColor: '#C8E6C9' }} textStyle={{fontSize: 10}}>{data.income.count} itens</Chip>
+{/* Card Receita */}
+          <Card style={[styles.card, { backgroundColor: theme.dark ? '#1b3a1b' : '#E8F5E9' }]} onPress={() => openTypeDetails('income')}>
+            {/* Reduzi o padding vertical interno do Card */}
+            <Card.Content style={{ paddingVertical: 2 }}> 
+                
+                {/* 1. Cabeçalho Compacto */}
+                <View style={{ marginBottom: 0 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text variant="titleMedium" style={{ color: theme.dark ? '#81c784' : '#2E7D32', fontWeight: 'bold' }}>Receitas</Text>
+                        <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>R$ {data.income.total.toFixed(2)}</Text>
                     </View>
-                    
-                    <Text variant="labelMedium">Total: <Text style={{fontWeight:'bold'}}>R$ {data.income.total.toFixed(2)}</Text></Text>
-                    <Text variant="labelMedium" style={{color: '#2E7D32'}}>Recebido: <Text style={{fontWeight:'bold'}}>R$ {data.income.received.toFixed(2)}</Text></Text>
-                    <Text variant="labelMedium" style={{color: '#424242'}}>A Receber: R$ {data.income.pending.toFixed(2)}</Text>
+                    <Divider style={{ marginVertical: 5, backgroundColor: theme.dark ? '#2E7D32' : '#C8E6C9' }} />
                 </View>
 
-                {/* Gráfico Direita */}
-                <View>
-                    <PieChart
-                        data={safeIncomeData}
-                        width={100}
-                        height={100}
-                        chartConfig={chartConfig}
-                        accessor={"amount"}
-                        backgroundColor={"transparent"}
-                        paddingLeft={"15"}
-                        center={[0, 0]}
-                        hasLegend={false}
-                    />
+                {/* 2. Corpo Compacto */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    
+                    {/* ESQUERDA: Valores e Legenda */}
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                         <View style={{ marginBottom: 2 }}>
+                            <Text variant="bodyMedium" style={{ color: theme.dark ? '#81c784' : '#2E7D32', marginBottom: 0, lineHeight: 20 }}>
+                                Recebido: <Text style={{fontWeight:'bold'}}>R$ {data.income.received.toFixed(2)}</Text>
+                            </Text>
+                            <Text variant="bodyMedium" style={{ opacity: 0.7, lineHeight: 20 }}>
+                                A Receber: R$ {data.income.pending.toFixed(2)}
+                            </Text>
+                         </View>
+
+                         {/* Legenda mais justa */}
+                         <View>
+                            {safeIncomeData.map((item, index) => (
+                                <View key={index} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 1 }}>
+                                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: item.color, marginRight: 6 }} />
+                                    <Text variant="labelSmall" style={{ color: theme.colors.onSurface }}>
+                                        {item.name}: {((item.amount / (data.income.total || 1)) * 100).toFixed(0)}%
+                                    </Text>
+                                </View>
+                            ))}
+                         </View>
+                    </View>
+
+                    {/* DIREITA: Gráfico */}
+                    <View style={{ alignItems: 'center' }}>
+                        <PieChart
+                            data={safeIncomeData}
+                            width={100} 
+                            height={100}
+                            chartConfig={chartConfig}
+                            accessor={"amount"}
+                            backgroundColor={"transparent"}
+                            paddingLeft={"25"} 
+                            center={[0, 0]}
+                            hasLegend={false} 
+                        />
+                    </View>
+
                 </View>
             </Card.Content>
           </Card>
 
-          {/* Card Despesa (Full Width + Gráfico à Esquerda) */}
-          <Card style={[styles.card, { backgroundColor: '#FFEBEE' }]} onPress={() => openTypeDetails('expense')}>
-             <Card.Content style={{ flexDirection: 'row', alignItems: 'center' }}>
-                {/* Gráfico Esquerda */}
-                <View style={{ marginRight: 10 }}>
-                    <PieChart
-                        data={safeExpenseData}
-                        width={100}
-                        height={100}
-                        chartConfig={chartConfig}
-                        accessor={"amount"}
-                        backgroundColor={"transparent"}
-                        paddingLeft={"15"}
-                        center={[0, 0]}
-                        hasLegend={false}
-                    />
+          {/* Card Despesa */}
+          <Card style={[styles.card, { backgroundColor: theme.dark ? '#3e1b1b' : '#FFEBEE' }]} onPress={() => openTypeDetails('expense')}>
+             <Card.Content style={{ paddingVertical: 2 }}>
+                {/* 1. Cabeçalho Compacto */}
+                <View style={{ marginBottom: 0 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text variant="titleMedium" style={{ color: theme.dark ? '#e57373' : '#C62828', fontWeight: 'bold' }}>Despesas</Text>
+                        <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>R$ {data.expense.total.toFixed(2)}</Text>
+                    </View>
+                    <Divider style={{ marginVertical: 5, backgroundColor: theme.dark ? '#C62828' : '#FFCDD2' }} />
                 </View>
 
-                {/* Texto Direita */}
-                <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5 }}>
-                        <Chip compact style={{ marginRight: 8, backgroundColor: '#FFCDD2' }} textStyle={{fontSize: 10}}>{data.expense.count} itens</Chip>
-                        <Text variant="titleMedium" style={{ color: '#C62828', fontWeight: 'bold' }}>Despesas</Text>
-                    </View>
+                {/* 2. Corpo Compacto */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                     
-                    <Text variant="labelMedium">Total: <Text style={{fontWeight:'bold'}}>R$ {data.expense.total.toFixed(2)}</Text></Text>
-                    <Text variant="labelMedium" style={{color: '#C62828'}}>Pago: <Text style={{fontWeight:'bold'}}>R$ {data.expense.paid.toFixed(2)}</Text></Text>
-                    <Text variant="labelMedium" style={{color: '#424242'}}>A Pagar: R$ {data.expense.pending.toFixed(2)}</Text>
+                    {/* ESQUERDA */}
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                         <View style={{ marginBottom: 6 }}>
+                            <Text variant="bodyMedium" style={{ color: theme.dark ? '#e57373' : '#C62828', marginBottom: 0, lineHeight: 20 }}>
+                                Pago: <Text style={{fontWeight:'bold'}}>R$ {data.expense.paid.toFixed(2)}</Text>
+                            </Text>
+                            <Text variant="bodyMedium" style={{ opacity: 0.7, lineHeight: 20 }}>
+                                A Pagar: R$ {data.expense.pending.toFixed(2)}
+                            </Text>
+                         </View>
+
+                         {/* Legenda */}
+                         <View>
+                            {safeExpenseData.map((item, index) => (
+                                <View key={index} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 1 }}>
+                                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: item.color, marginRight: 6 }} />
+                                    <Text variant="labelSmall" style={{ color: theme.colors.onSurface }}>
+                                        {item.name}: {((item.amount / (data.expense.total || 1)) * 100).toFixed(0)}%
+                                    </Text>
+                                </View>
+                            ))}
+                         </View>
+                    </View>
+
+                    {/* DIREITA */}
+                    <View style={{ alignItems: 'center' }}>
+                        <PieChart
+                            data={safeExpenseData}
+                            width={100}
+                            height={100}
+                            chartConfig={chartConfig}
+                            accessor={"amount"}
+                            backgroundColor={"transparent"}
+                            paddingLeft={"25"}
+                            center={[0, 0]}
+                            hasLegend={false}
+                        />
+                    </View>
+
                 </View>
             </Card.Content>
           </Card>
@@ -294,19 +401,20 @@ export default function Dashboard() {
             }}
             markingType={'multi-dot'}
             markedDates={markedDates}
-            theme={{
-              calendarBackground: theme.colors.surface,
-              textSectionTitleColor: theme.colors.onSurface,
+theme={{
+              // DESIGN ADAPTATIVO (Usa cores do tema)
+              calendarBackground: theme.colors.elevation.level1, // Fundo correto no dark/light
+              textSectionTitleColor: theme.colors.onSurfaceVariant,
               dayTextColor: theme.colors.onSurface,
               todayTextColor: theme.colors.primary,
               selectedDayBackgroundColor: theme.colors.primary,
+              selectedDayTextColor: theme.colors.onPrimary,
               arrowColor: theme.colors.primary,
-              // Oculta header também por tema para garantir
+              monthTextColor: theme.colors.onSurface,
+              indicatorColor: theme.colors.primary,
+              textDisabledColor: theme.colors.surfaceDisabled,
               'stylesheet.calendar.header': {
-                header: {
-                    height: 0,
-                    opacity: 0
-                }
+                header: { height: 0, opacity: 0 }
               }
             }}
           />
@@ -344,12 +452,14 @@ export default function Dashboard() {
         </View>
       </ScrollView>
 
-      <FAB icon="plus" label="Lançar" style={[styles.fab, { backgroundColor: theme.colors.primary }]} color="white" onPress={() => router.push('/add-transaction')} />
+      <FAB icon="plus" label="" style={[styles.fab, { backgroundColor: theme.colors.primary }]} color="white" onPress={() => router.push('/add-transaction')} />
 
-      {/* Modal Previsão */}
+{/* Modal Previsão */}
       <Portal>
         <Dialog visible={showForecast} onDismiss={() => setShowForecast(false)}>
-            <Dialog.Title>Previsão {format(viewMonth, 'MMMM')}</Dialog.Title>
+            {/* ADICIONADO: { locale: ptBR } para traduzir o mês */}
+            <Dialog.Title>Previsão {format(viewMonth, 'MMMM', { locale: ptBR })}</Dialog.Title>
+            
             <Dialog.Content>
                 <Text>Valores projetados (Pago + Pendente):</Text>
                 <Divider style={{ marginVertical: 10 }} />

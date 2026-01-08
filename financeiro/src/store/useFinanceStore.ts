@@ -1,8 +1,22 @@
 import { create } from 'zustand';
-import { getProfiles, updateProfileSettings } from '../database/db';
+import { getProfiles, updateProfileSettings, Profile } from '../database/db';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const useFinanceStore = create((set, get) => ({
+interface FinanceState {
+  profiles: Profile[];
+  currentProfile: Profile | null;
+  refreshKey: number;
+  themeMode: 'system' | 'light' | 'dark';
+  
+  loadProfiles: () => void;
+  setCurrentProfile: (profile: Profile) => void;
+  updateProfileConfig: (field: string, value: any) => void;
+  notifyUpdate: () => void;
+  setThemeMode: (mode: 'system' | 'light' | 'dark') => Promise<void>;
+  loadTheme: () => Promise<void>;
+}
+
+const useFinanceStore = create<FinanceState>((set, get) => ({
   profiles: [],
   currentProfile: null,
   refreshKey: 0,
@@ -39,7 +53,9 @@ const useFinanceStore = create((set, get) => ({
 
   loadTheme: async () => {
     const saved = await AsyncStorage.getItem('themeMode');
-    if (saved) set({ themeMode: saved });
+    if (saved === 'light' || saved === 'dark' || saved === 'system') {
+        set({ themeMode: saved });
+    }
   }
 }));
 

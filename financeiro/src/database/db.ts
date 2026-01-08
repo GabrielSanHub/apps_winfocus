@@ -1,9 +1,64 @@
 import * as SQLite from 'expo-sqlite';
 import { addMonths } from 'date-fns';
 
+// --- Interfaces de Tipagem ---
+
+export interface Profile {
+  id: number;
+  name: string;
+  type: 'personal' | 'business';
+  settings_share_categories: number; // 0 ou 1
+  settings_balance_mode: 'monthly' | 'total'; // Exemplo
+}
+
+export interface Category {
+  id: number;
+  name: string;
+  type: 'income' | 'expense';
+  icon?: string;
+  is_default: number;
+  profile_id?: number | null;
+}
+
+export interface Transaction {
+  id?: number;
+  profile_id: number;
+  amount: number;
+  type: 'income' | 'expense';
+  category: string;
+  description?: string;
+  date: string; // YYYY-MM-DD
+  expected_date?: string;
+  is_paid: number; // 0 | 1
+  is_fixed: number; // 0 | 1
+  repeat_group_id?: string | null;
+  repeat_total?: number;
+  repeat_current?: number;
+  attachment_uri?: string;
+  // Campos auxiliares para criação
+  repeat_months?: number;
+}
+
+export interface DashboardData {
+  balance: number;
+  income: { total: number; received: number; pending: number; count: number };
+  expense: { total: number; paid: number; pending: number; count: number };
+}
+
+export interface DashboardDataWithCounts extends DashboardData {
+    counts?: {
+        incPaid: number;
+        incPend: number;
+        expPaid: number;
+        expPend: number;
+    }
+}
+
+// --- Inicialização do Banco ---
+
 const db = SQLite.openDatabaseSync('winfocus_finance_v5.db'); 
 
-export const initDB = () => {
+export const initDB = (): void => {
   // 1. Perfis
   db.execSync(`
     CREATE TABLE IF NOT EXISTS profiles (
@@ -45,7 +100,8 @@ export const initDB = () => {
         ['Investimentos', 'income', 'chart-line']
     ];
     defaults.forEach(c => {
-        db.runSync(`INSERT INTO categories (name, type, icon, is_default, profile_id) VALUES (?, ?, ?, 1, NULL)`, c);
+        // TypeScript pode reclamar do array misto, forçamos a tipagem no bind
+        db.runSync(`INSERT INTO categories (name, type, icon, is_default, profile_id) VALUES (?, ?, ?, 1, NULL)`, c as any[]);
     });
   }
 
@@ -73,15 +129,17 @@ export const initDB = () => {
 
 // --- GETTERS & SETTERS ---
 
-export const getProfiles = () => db.getAllSync('SELECT * FROM profiles');
+export const getProfiles = (): Profile[] => {
+    return db.getAllSync('SELECT * FROM profiles') as Profile[];
+};
 
-export const updateProfileSettings = (id, field, value) => {
+export const updateProfileSettings = (id: number, field: string, value: any): void => {
     db.runSync(`UPDATE profiles SET ${field} = ? WHERE id = ?`, [value, id]);
 };
 
-export const getCategories = (profileId, type, shareCategories) => {
+export const getCategories = (profileId: number, type?: string, shareCategories?: number): Category[] => {
     let query = `SELECT * FROM categories WHERE 1=1`; 
-    const params = [];
+    const params: any[] = [];
 
     if (type) {
         query += ` AND type = ?`;
@@ -97,25 +155,31 @@ export const getCategories = (profileId, type, shareCategories) => {
     }
     
     query += ` ORDER BY name`;
-    return db.getAllSync(query, params);
+    return db.getAllSync(query, params) as Category[];
 };
 
-export const addCategory = (name, type, profileId) => {
+export const addCategory = (name: string, type: string, profileId: number): void => {
     db.runSync(`INSERT INTO categories (name, type, icon, is_default, profile_id) VALUES (?, ?, 'tag', 0, ?)`, [name, type, profileId]);
 };
 
-export const deleteCategory = (id) => {
+export const deleteCategory = (id: number): void => {
     db.runSync(`DELETE FROM categories WHERE id = ? AND is_default = 0`, [id]);
 };
 
 // Lógica de Saldo e Fixos
 
-export const processFixedTransactions = (profileId, dateReference) => {
+export const processFixedTransactions = (profileId: number, dateReference: string): void => {
     const monthStr = dateReference.substring(0, 7);
     
-    const fixedGroups = db.getAllSync(`SELECT * FROM transactions WHERE profile_id = ? AND is_fixed = 1 GROUP BY repeat_group_id`, [profileId]);
+    const fixedGroups = db.getAllSync(
+        `SELECT * FROM transactions WHERE profile_id = ? AND is_fixed = 1 GROUP BY repeat_group_id`, 
+        [profileId]
+    ) as Transaction[];
 
     fixedGroups.forEach(tx => {
+        // Assegura que repeat_group_id existe
+        if (!tx.repeat_group_id) return;
+
         const exists = db.getFirstSync(
             `SELECT id FROM transactions WHERE repeat_group_id = ? AND strftime('%Y-%m', date) = ?`,
             [tx.repeat_group_id, monthStr]
@@ -130,19 +194,18 @@ export const processFixedTransactions = (profileId, dateReference) => {
                 INSERT INTO transactions (
                     profile_id, amount, type, category, description, date, expected_date, is_paid, is_fixed, repeat_group_id, repeat_total
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, -1)
-            `, [profileId, tx.amount, tx.type, tx.category, tx.description, newDate, newDate, tx.repeat_group_id]);
+            `, [profileId, tx.amount, tx.type, tx.category, tx.description || '', newDate, newDate, tx.repeat_group_id]);
         }
     });
 };
 
-export const getDashboardData = (profileId, monthStr, balanceMode) => {
+export const getDashboardData = (profileId: number, monthStr: string, balanceMode: string): DashboardData => {
     const today = new Date().toISOString().split('T')[0];
     
-    // 1. CÁLCULO DO SALDO (Disponível/Realizado)
+    // 1. CÁLCULO DO SALDO
     let balanceQuery = `SELECT type, SUM(amount) as total FROM transactions WHERE profile_id = ?`;
-    let balanceParams = [profileId];
+    let balanceParams: any[] = [profileId];
     
-    // Saldo: Data <= Hoje OU Marcado como Pago
     let whereBalance = ` AND (date <= ? OR is_paid = 1)`; 
     
     if (balanceMode === 'monthly') {
@@ -152,21 +215,19 @@ export const getDashboardData = (profileId, monthStr, balanceMode) => {
         balanceParams.push(today);
     }
     
-    const balanceResult = db.getAllSync(balanceQuery + whereBalance + ` GROUP BY type`, balanceParams);
+    const balanceResult = db.getAllSync(balanceQuery + whereBalance + ` GROUP BY type`, balanceParams) as {type: string, total: number}[];
     let realizedBalance = 0;
     balanceResult.forEach(r => realizedBalance += (r.type === 'income' ? r.total : -r.total));
 
-    // 2. DETALHAMENTO DO MÊS (Para os Cards Expandidos e Gráficos)
-    // Busca soma agrupada por tipo e status (pago ou não)
+    // 2. DETALHAMENTO DO MÊS
     const breakdown = db.getAllSync(
         `SELECT type, is_paid, SUM(amount) as total, COUNT(*) as count
          FROM transactions 
          WHERE profile_id = ? AND strftime('%Y-%m', date) = ? 
          GROUP BY type, is_paid`,
         [profileId, monthStr]
-    );
+    ) as { type: string; is_paid: number; total: number; count: number }[];
 
-    // Inicializa estrutura
     let income = { total: 0, received: 0, pending: 0, count: 0 };
     let expense = { total: 0, paid: 0, pending: 0, count: 0 };
 
@@ -190,31 +251,30 @@ export const getDashboardData = (profileId, monthStr, balanceMode) => {
     return { balance: realizedBalance, income, expense };
 };
 
-export const getOverdueTransactions = (profileId) => {
+export const getOverdueTransactions = (profileId: number): Transaction[] => {
     const today = new Date().toISOString().split('T')[0];
     return db.getAllSync(
         `SELECT * FROM transactions 
          WHERE profile_id = ? AND is_paid = 0 AND type = 'expense' AND date < ?
          ORDER BY date ASC`,
         [profileId, today]
-    );
+    ) as Transaction[];
 };
 
-export const markAsPaid = (id) => {
+export const markAsPaid = (id: number): void => {
     db.runSync(`UPDATE transactions SET is_paid = 1 WHERE id = ?`, [id]);
 };
 
-export const getForecastData = (profileId, monthStr) => {
+export const getForecastData = (profileId: number, monthStr: string): { type: string, total: number }[] => {
     return db.getAllSync(
         `SELECT type, SUM(amount) as total FROM transactions 
          WHERE profile_id = ? AND strftime('%Y-%m', date) = ? 
          GROUP BY type`,
         [profileId, monthStr]
-    );
+    ) as { type: string, total: number }[];
 };
 
-// --- FUNÇÃO CORRIGIDA AQUI ---
-export const addTransaction = (tx) => {
+export const addTransaction = (tx: Transaction): void => {
   const { profile_id, amount, type, category, description, date, is_paid, repeat_months = 1, is_fixed = 0 } = tx;
   
   const groupId = (repeat_months > 1 || is_fixed) ? Date.now().toString() : null;
@@ -222,9 +282,6 @@ export const addTransaction = (tx) => {
   const baseDateObj = new Date(year, month - 1, day); 
 
   const loops = is_fixed ? 1 : repeat_months;
-  
-  // CORREÇÃO: Usamos (is_paid ?? 1). Se is_paid for 0, ele mantém 0. Se for null/undefined, vira 1.
-  // Antes estava is_paid || 1, que transformava 0 em 1.
   const statusToSave = (is_paid !== undefined && is_paid !== null) ? is_paid : 1;
 
   for (let i = 0; i < loops; i++) {
@@ -238,7 +295,7 @@ export const addTransaction = (tx) => {
         is_fixed, repeat_group_id, repeat_total, repeat_current
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        profile_id, amount, type, category, desc, dateStr, dateStr, statusToSave,
+        profile_id, amount, type, category, desc || '', dateStr, dateStr, statusToSave,
         is_fixed, groupId, is_fixed ? -1 : repeat_months, i + 1
       ]
     );
@@ -247,28 +304,26 @@ export const addTransaction = (tx) => {
 
 // --- CRUD & UTILS ---
 
-export const getTransactionById = (id) => {
-    return db.getFirstSync(`SELECT * FROM transactions WHERE id = ?`, [id]);
+export const getTransactionById = (id: string | number): Transaction | null => {
+    return db.getFirstSync(`SELECT * FROM transactions WHERE id = ?`, [id]) as Transaction | null;
 };
 
-// CORREÇÃO: Agora atualiza também o is_paid durante a edição
-export const updateTransaction = (id, tx) => {
-    // Adicionado is_paid = ? na query
+export const updateTransaction = (id: string | number, tx: Partial<Transaction>): void => {
     const statusToSave = (tx.is_paid !== undefined && tx.is_paid !== null) ? tx.is_paid : 1;
     
     db.runSync(
         `UPDATE transactions SET amount = ?, category = ?, description = ?, date = ?, is_paid = ? WHERE id = ?`,
-        [tx.amount, tx.category, tx.description, tx.date, statusToSave, id]
+        [tx.amount || 0, tx.category || '', tx.description || '', tx.date || '', statusToSave, id]
     );
 };
 
-export const toggleTransactionStatus = (id, currentStatus) => {
+export const toggleTransactionStatus = (id: number, currentStatus: number): number => {
     const newStatus = currentStatus === 1 ? 0 : 1;
     db.runSync(`UPDATE transactions SET is_paid = ? WHERE id = ?`, [newStatus, id]);
     return newStatus;
 };
 
-export const getRecurringAndFixedGroups = (profileId) => {
+export const getRecurringAndFixedGroups = (profileId: number): any[] => {
     return db.getAllSync(`
       SELECT repeat_group_id, description, category, amount, type, is_fixed, COUNT(*) as count 
       FROM transactions 
@@ -277,36 +332,35 @@ export const getRecurringAndFixedGroups = (profileId) => {
     `, [profileId]);
 };
 
-export const deleteTransactionGroup = (groupId) => {
+export const deleteTransactionGroup = (groupId: string): void => {
     db.runSync(`DELETE FROM transactions WHERE repeat_group_id = ? AND is_paid = 0`, [groupId]);
 };
 
-export const getTransactions = (profileId, monthStr) => {
+export const getTransactions = (profileId: number, monthStr?: string): Transaction[] => {
     if (monthStr) {
-      return db.getAllSync(`SELECT * FROM transactions WHERE profile_id = ? AND strftime('%Y-%m', date) = ? ORDER BY date DESC`, [profileId, monthStr]);
+      return db.getAllSync(`SELECT * FROM transactions WHERE profile_id = ? AND strftime('%Y-%m', date) = ? ORDER BY date DESC`, [profileId, monthStr]) as Transaction[];
     }
-    return db.getAllSync(`SELECT * FROM transactions WHERE profile_id = ? ORDER BY date DESC LIMIT 100`, [profileId]);
+    return db.getAllSync(`SELECT * FROM transactions WHERE profile_id = ? ORDER BY date DESC LIMIT 100`, [profileId]) as Transaction[];
 };
 
-export const getTransactionsByDate = (profileId, dateStr) => {
-    return db.getAllSync(`SELECT * FROM transactions WHERE profile_id = ? AND date = ?`, [profileId, dateStr]);
+export const getTransactionsByDate = (profileId: number, dateStr: string): Transaction[] => {
+    return db.getAllSync(`SELECT * FROM transactions WHERE profile_id = ? AND date = ?`, [profileId, dateStr]) as Transaction[];
 };
 
-export const getMonthTransactionsByType = (profileId, monthStr, type) => {
+export const getMonthTransactionsByType = (profileId: number, monthStr: string, type: string): Transaction[] => {
     return db.getAllSync(
         `SELECT * FROM transactions WHERE profile_id = ? AND strftime('%Y-%m', date) = ? AND type = ? ORDER BY date`, 
         [profileId, monthStr, type]
-    );
+    ) as Transaction[];
 };
 
-// Estatísticas e Limpeza
-export const getAllTimeTotals = (profileId) => {
+export const getAllTimeTotals = (profileId: number): { income: number, expense: number, balance: number } => {
     const result = db.getAllSync(
         `SELECT type, SUM(amount) as total FROM transactions 
          WHERE profile_id = ? 
          GROUP BY type`,
         [profileId]
-    );
+    ) as { type: string, total: number }[];
     
     let income = 0;
     let expense = 0;
@@ -319,6 +373,6 @@ export const getAllTimeTotals = (profileId) => {
     return { income, expense, balance: income - expense };
 };
 
-export const clearAllProfileTransactions = (profileId) => {
+export const clearAllProfileTransactions = (profileId: number): void => {
     db.runSync(`DELETE FROM transactions WHERE profile_id = ?`, [profileId]);
 };

@@ -9,12 +9,18 @@ import { getDashboardData, getAllTimeTotals } from '../../src/database/db';
 
 const screenWidth = Dimensions.get('window').width;
 
+interface StatsData {
+  income: number;
+  expense: number;
+  balance: number;
+}
+
 export default function Statistics() {
   const theme = useTheme();
   const { currentProfile, refreshKey } = useFinanceStore();
   
-  const [viewMode, setViewMode] = useState('monthly'); // 'monthly' | 'alltime'
-  const [stats, setStats] = useState({ income: 0, expense: 0, balance: 0 });
+  const [viewMode, setViewMode] = useState<'monthly' | 'alltime'>('monthly'); 
+  const [stats, setStats] = useState<StatsData>({ income: 0, expense: 0, balance: 0 });
 
   useFocusEffect(
     useCallback(() => {
@@ -23,6 +29,8 @@ export default function Statistics() {
   );
 
   const loadStats = () => {
+    if (!currentProfile) return;
+
     if (viewMode === 'monthly') {
         // Pega dados do mês atual
         const monthStr = format(new Date(), 'yyyy-MM');
@@ -86,7 +94,7 @@ export default function Statistics() {
 
         <SegmentedButtons
             value={viewMode}
-            onValueChange={setViewMode}
+            onValueChange={(val) => setViewMode(val as 'monthly' | 'alltime')}
             buttons={[
                 { value: 'monthly', label: 'Este Mês' },
                 { value: 'alltime', label: 'Todo o Período' },

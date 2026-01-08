@@ -1,7 +1,7 @@
-// backend/server.js
-const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
+// backend/server.ts
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import bodyParser from 'body-parser';
 
 const app = express();
 const PORT = 3000;
@@ -10,17 +10,28 @@ const PORT = 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
+// Interface genérica para o que vier no sync
+interface Task {
+  [key: string]: any;
+}
+
 // Banco de dados falso (em memória RAM)
-let tasksBackup = [];
+let tasksBackup: Task[] = [];
 
 // Rota de Teste
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
     res.send('Servidor Backend rodando perfeitamente!');
 });
 
 // Rota para receber tarefas do App (Sincronização)
-app.post('/sync', (req, res) => {
+app.post('/sync', (req: Request, res: Response) => {
     const { tasks } = req.body;
+    
+    if (!tasks || !Array.isArray(tasks)) {
+        res.status(400).json({ message: 'Formato inválido. Esperado array de tasks.' });
+        return;
+    }
+
     console.log('Recebi tarefas do App:', tasks);
     tasksBackup = tasks; // Salva na memória do servidor
     res.json({ message: 'Dados sincronizados com sucesso!', count: tasks.length });

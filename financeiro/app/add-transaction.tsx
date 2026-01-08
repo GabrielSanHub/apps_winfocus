@@ -4,12 +4,12 @@ import { TextInput, Button, SegmentedButtons, HelperText, useTheme, Switch, Text
 import DateTimePicker from '@react-native-community/datetimepicker'; 
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import useFinanceStore from '../src/store/useFinanceStore';
-import { addTransaction, getCategories, getTransactionById, updateTransaction } from '../src/database/db';
+import { addTransaction, getCategories, getTransactionById, updateTransaction, Category, Transaction } from '../src/database/db';
 import * as Notifications from 'expo-notifications';
 
 export default function AddTransaction() {
   const router = useRouter();
-  const params = useLocalSearchParams();
+  const params = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
   const { currentProfile, notifyUpdate } = useFinanceStore();
 
@@ -19,15 +19,11 @@ export default function AddTransaction() {
   const [description, setDescription] = useState('');
   const [type, setType] = useState('expense');
   const [category, setCategory] = useState('');
-  const [categoriesList, setCategoriesList] = useState([]);
+  const [categoriesList, setCategoriesList] = useState<Category[]>([]);
   const [showCatModal, setShowCatModal] = useState(false);
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
   
-  // --- MUDANÇA PRINCIPAL AQUI ---
-  // isDone = true -> Conta Paga/Recebida.
-  // isDone = false -> Conta Pendente.
-  // Estado inicial = false (Pendente por padrão).
   const [isDone, setIsDone] = useState(false); 
   
   const [repeatMonths, setRepeatMonths] = useState(1);
@@ -40,11 +36,10 @@ export default function AddTransaction() {
         const tx = getTransactionById(params.id);
         if (tx) {
             setAmount(tx.amount.toString());
-            setDescription(tx.description);
+            setDescription(tx.description || '');
             setType(tx.type);
             setCategory(tx.category);
             setDate(new Date(tx.date));
-            // Se is_paid for 1 no banco, ativamos o switch
             setIsDone(tx.is_paid === 1);
             if (tx.is_fixed) setIsFixed(true);
         }
@@ -56,7 +51,6 @@ export default function AddTransaction() {
     if (currentProfile) {
         const cats = getCategories(currentProfile.id, type, currentProfile.settings_share_categories);
         setCategoriesList(cats);
-        // Seleciona padrão se não estiver editando ou se categoria estiver vazia
         if (!isEditing && cats.length > 0) setCategory(cats[0].name);
         else if (isEditing && !category && cats.length > 0) setCategory(cats[0].name);
     }
@@ -65,34 +59,33 @@ export default function AddTransaction() {
   const handleSave = async () => {
     if (!amount || !currentProfile) return Alert.alert("Erro", "Preencha o valor.");
 
-    // Lógica Invertida: Se o switch estiver ON (isDone), is_paid = 1. Senão 0.
     const finalStatus = isDone ? 1 : 0;
 
-    const transactionData = {
+    const transactionData: Transaction = {
       profile_id: currentProfile.id,
       amount: parseFloat(amount.replace(',', '.')),
-      type,
+      type: type as 'income' | 'expense',
       category,
       description: description || category,
       date: date.toISOString().split('T')[0],
-      is_paid: finalStatus, 
+      is_paid: finalStatus,
+      is_fixed: isFixed ? 1 : 0, 
     };
 
     try {
-      if (isEditing) {
+      if (isEditing && params.id) {
         updateTransaction(params.id, transactionData);
         Alert.alert("Sucesso", "Transação atualizada!");
       } else {
         const newTx = {
             ...transactionData,
             repeat_months: isFixed ? 1 : repeatMonths,
-            is_fixed: isFixed ? 1 : 0
         };
         addTransaction(newTx);
         
         // Se NÃO estiver marcada como feita (Pendente), agenda notificação
         if (!isDone) {
-            await scheduleNotification(newTx.description, date);
+            await scheduleNotification(newTx.description || 'Transação', date);
         }
       }
 
@@ -104,7 +97,7 @@ export default function AddTransaction() {
     }
   };
 
-  const scheduleNotification = async (title, triggerDate) => {
+  const scheduleNotification = async (title: string, triggerDate: Date) => {
     const notifDate = new Date(triggerDate);
     notifDate.setDate(notifDate.getDate() - 1);
     notifDate.setHours(9, 0, 0, 0);
@@ -124,11 +117,10 @@ export default function AddTransaction() {
         
         <SegmentedButtons
           value={type}
-          onValueChange={setType}
-          disabled={isEditing} 
+          onValueChange={isEditing ? () => {} : setType}
           buttons={[
-            { value: 'income', label: 'Receita', icon: 'arrow-up' },
-            { value: 'expense', label: 'Despesa', icon: 'arrow-down' },
+            { value: 'income', label: 'Receita', icon: 'arrow-up', disabled: isEditing },
+            { value: 'expense', label: 'Despesa', icon: 'arrow-down', disabled: isEditing },
           ]}
           style={{ marginBottom: 20 }}
         />

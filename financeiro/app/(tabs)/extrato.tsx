@@ -3,23 +3,22 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 import { Chip, Divider, List, Searchbar, Text, useTheme } from 'react-native-paper';
-import { getTransactions } from '../../src/database/db';
+import { getTransactions, Transaction } from '../../src/database/db';
 import useFinanceStore from '../../src/store/useFinanceStore';
 
 export default function Extrato() {
   const theme = useTheme();
   const { currentProfile, refreshKey } = useFinanceStore();
   
-  const [transactions, setTransactions] = useState([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterType, setFilterType] = useState('all'); // all, income, expense
+  const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
 
   useFocusEffect(
     useCallback(() => {
       if (currentProfile) {
         // Pega transações do mês atual (ou expandir para lógica de scroll infinito depois)
         // Por simplificação, vamos pegar o mês atual. Para extrato completo, removeria o filtro de mês da query SQL.
-        // Vamos alterar a query SQL no db.js para permitir extrato geral ou carregar deste mês
         const today = new Date().toISOString().slice(0, 7);
         const data = getTransactions(currentProfile.id, today);
         setTransactions(data);
@@ -28,8 +27,11 @@ export default function Extrato() {
   );
 
   const filteredData = transactions.filter(item => {
-    const matchesSearch = item.description?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          item.category.toLowerCase().includes(searchQuery.toLowerCase());
+    const desc = item.description || '';
+    const cat = item.category || '';
+    
+    const matchesSearch = desc.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          cat.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesType = filterType === 'all' ? true : item.type === filterType;
     return matchesSearch && matchesType;
   });
@@ -73,7 +75,7 @@ export default function Extrato() {
 
       <FlatList
         data={filteredData}
-        keyExtractor={item => item.id.toString()}
+        keyExtractor={item => String(item.id)}
         contentContainerStyle={{ paddingBottom: 20 }}
         renderItem={({ item }) => (
           <View>

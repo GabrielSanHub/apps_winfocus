@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Button, Menu, useTheme } from 'react-native-paper';
 import useFinanceStore from '../src/store/useFinanceStore';
+import { Profile } from '../src/database/db';
 
 export default function ProfileSelector() {
   const { profiles, currentProfile, setCurrentProfile, notifyUpdate } = useFinanceStore();
@@ -11,12 +12,11 @@ export default function ProfileSelector() {
   const openMenu = () => setVisible(true);
   const closeMenu = () => setVisible(false);
 
-  const handleSelect = (profile) => {
+  const handleSelect = (profile: Profile) => {
     // 1. Fecha o menu primeiro
     closeMenu();
     
-    // 2. Aguarda um instante para a animação do menu terminar e não travar a UI
-    // enquanto o React remonta a tela inteira com o novo perfil
+    // 2. Aguarda um instante para a animação do menu terminar
     setTimeout(() => {
       setCurrentProfile(profile);
       notifyUpdate();
@@ -64,7 +64,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 1,
     marginTop: 30,
-    // O zIndex ajuda o Menu a sobrepor outros elementos caso haja conflito de layout
     zIndex: 100, 
     elevation: 2, 
   }

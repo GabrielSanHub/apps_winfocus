@@ -2,34 +2,36 @@ import React, { useState, useEffect } from 'react';
 import { View, ScrollView, Alert, StyleSheet } from 'react-native';
 import { List, Switch, Text, Button, Divider, useTheme, IconButton, TextInput, Dialog, Portal, SegmentedButtons } from 'react-native-paper';
 import useFinanceStore from '../../src/store/useFinanceStore';
-import { getRecurringAndFixedGroups, deleteTransactionGroup, getCategories, addCategory, deleteCategory, clearAllProfileTransactions } from '../../src/database/db';
+import { getRecurringAndFixedGroups, deleteTransactionGroup, getCategories, addCategory, deleteCategory, clearAllProfileTransactions, Category } from '../../src/database/db';
+
+interface RecurringGroup {
+    repeat_group_id: string;
+    description: string;
+    category: string;
+    amount: number;
+    type: string;
+    is_fixed: number;
+    count: number;
+}
 
 export default function Settings() {
   const theme = useTheme();
   const { themeMode, setThemeMode, currentProfile, setCurrentProfile, profiles, refreshKey, notifyUpdate, updateProfileConfig } = useFinanceStore();  
   
-  const [recurringGroups, setRecurringGroups] = useState([]);
-  const [categories, setCategories] = useState([]);
+  const [recurringGroups, setRecurringGroups] = useState<RecurringGroup[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [visibleCatDialog, setVisibleCatDialog] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatType, setNewCatType] = useState('expense');
 
   useEffect(() => {
     if (currentProfile) {
-        setRecurringGroups(getRecurringAndFixedGroups(currentProfile.id));
-        setCategories(getCategories(currentProfile.id, null, currentProfile.settings_share_categories));
+        setRecurringGroups(getRecurringAndFixedGroups(currentProfile.id) as RecurringGroup[]);
+        setCategories(getCategories(currentProfile.id, undefined, currentProfile.settings_share_categories));
     }
   }, [currentProfile, refreshKey]);
 
-  const loadSettingsData = () => {
-    if (currentProfile) {
-        setRecurringGroups(getRecurringAndFixedGroups(currentProfile.id));
-        // Passa o share_categories do perfil para saber o que listar
-        setCategories(getCategories(currentProfile.id, null, currentProfile.settings_share_categories));
-    }
-  };
-
-  const handleDeleteGroup = (groupId) => {
+  const handleDeleteGroup = (groupId: string) => {
     Alert.alert(
       "Parar Recorrência",
       "Isso apagará apenas os lançamentos FUTUROS ou pendentes. Histórico pago será mantido.",
@@ -48,9 +50,10 @@ export default function Settings() {
   };
 
   const handleClearAll = () => {
+    if (!currentProfile) return;
     Alert.alert(
         "CUIDADO: Limpar Tudo", 
-        `Tem certeza que deseja apagar TODAS as transações do perfil "${currentProfile?.name}"? Isso não pode ser desfeito.`,
+        `Tem certeza que deseja apagar TODAS as transações do perfil "${currentProfile.name}"? Isso não pode ser desfeito.`,
         [
             { text: "Cancelar", style: 'cancel' },
             { 
@@ -67,20 +70,20 @@ export default function Settings() {
   };
 
   const handleAddCategory = () => {
-    if (!newCatName.trim()) return;
+    if (!newCatName.trim() || !currentProfile) return;
     addCategory(newCatName, newCatType, currentProfile.id);
     setVisibleCatDialog(false);
     setNewCatName('');
     notifyUpdate();
   };
 
-  const handleDeleteCategory = (id, isDefault) => {
-    if (isDefault) return Alert.alert("Aviso", "Categorias padrão não podem ser excluídas.");
+  const handleDeleteCategory = (id: number, isDefault: number) => {
+    if (isDefault === 1) return Alert.alert("Aviso", "Categorias padrão não podem ser excluídas.");
     deleteCategory(id);
     notifyUpdate();
   };
 
-    const handleSwitchProfileType = (type) => {
+    const handleSwitchProfileType = (type: string) => {
     // Encontra o primeiro perfil que corresponda ao tipo (personal ou business)
     const targetProfile = profiles.find(p => p.type === type);
     if (targetProfile) {
@@ -95,7 +98,7 @@ export default function Settings() {
     <View style={{ flex: 1 }}>
     <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
       
-    {/* NOVO SELETOR DE PERFIL (PESSOAL | EMPRESA) */}
+    {/* SELETOR DE PERFIL (PESSOAL | EMPRESA) */}
       <View style={{ padding: 16 }}>
         <Text variant="titleMedium" style={{ marginBottom: 10, textAlign: 'center' }}>Perfil Ativo</Text>
         <SegmentedButtons
@@ -133,9 +136,9 @@ export default function Settings() {
         <Divider />
         <List.Item
             title="Modo de Saldo"
-            description={currentProfile?.settings_balance_mode === 'accumulated' ? "Soma de todo o histórico" : "Apenas fluxo do mês"}
-            right={() => <Switch value={currentProfile?.settings_balance_mode === 'accumulated'} onValueChange={(val) => updateProfileConfig('settings_balance_mode', val ? 'accumulated' : 'monthly')} />}
-        />
+            description={currentProfile?.settings_balance_mode === 'total' ? "Soma de todo o histórico" : "Apenas fluxo do mês"}
+            right={() => <Switch value={currentProfile?.settings_balance_mode === 'total'} onValueChange={(val) => updateProfileConfig('settings_balance_mode', val ? 'total' : 'monthly')} />}
+        /> 
       </List.Section>
       
       <Divider />
@@ -151,7 +154,7 @@ export default function Settings() {
                 title={cat.name}
                 description={cat.is_default ? "Padrão (Global)" : "Personalizada"}
                 left={props => <List.Icon {...props} icon={cat.icon || 'tag'} />}
-                right={props => !cat.is_default && (
+                right={() => !cat.is_default && (
                     <IconButton icon="trash-can-outline" iconColor={theme.colors.error} onPress={() => handleDeleteCategory(cat.id, cat.is_default)} />
                 )}
              />
@@ -195,7 +198,7 @@ export default function Settings() {
             <Dialog.Content>
                 <SegmentedButtons
                     value={newCatType}
-                    onValueChange={setNewCatType}
+                    onValueChange={(val) => setNewCatType(val)}
                     buttons={[ { value: 'income', label: 'Receita' }, { value: 'expense', label: 'Despesa' } ]}
                     style={{ marginBottom: 15 }}
                 />

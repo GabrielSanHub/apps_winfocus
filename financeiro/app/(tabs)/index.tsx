@@ -1,17 +1,18 @@
 import React, { useState, useCallback } from 'react';
-import { View, ScrollView, StyleSheet, TouchableOpacity, Alert, Modal, FlatList, Dimensions } from 'react-native';
-import { Text, Card, FAB, useTheme, List, Chip, Divider, IconButton, Portal, Dialog, Button, SegmentedButtons } from 'react-native-paper';
+import { View, ScrollView, StyleSheet, TouchableOpacity, Modal, FlatList, Dimensions } from 'react-native';
+import { Text, Card, FAB, useTheme, List, Chip, Divider, IconButton, Portal, Dialog, Button } from 'react-native-paper';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
-import { PieChart } from 'react-native-chart-kit'; // Importando Gráfico
+import { PieChart } from 'react-native-chart-kit'; 
 import { useRouter, useFocusEffect } from 'expo-router';
-import { format, addMonths, subMonths, parseISO } from 'date-fns';
+import { format, addMonths, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 import useFinanceStore from '../../src/store/useFinanceStore';
 import { 
     getDashboardData, getTransactionsByDate, getTransactions, 
     processFixedTransactions, getOverdueTransactions, markAsPaid, 
-    getForecastData, getMonthTransactionsByType, toggleTransactionStatus 
+    getForecastData, getMonthTransactionsByType, toggleTransactionStatus,
+    Transaction, DashboardDataWithCounts
 } from '../../src/database/db';
 
 // Configurações
@@ -24,34 +25,33 @@ LocaleConfig.locales['br'] = {
 };
 LocaleConfig.defaultLocale = 'br';
 
-const screenWidth = Dimensions.get('window').width;
-
 export default function Dashboard() {
   const theme = useTheme();
   const router = useRouter();
   const { currentProfile, refreshKey, notifyUpdate } = useFinanceStore();
   
   // Controle de Data via Header Personalizado
-  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd')); // Data completa selecionada
-  const [viewMonth, setViewMonth] = useState(new Date()); // Objeto Date controlando o Mês visualizado
+  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd')); 
+  const [viewMonth, setViewMonth] = useState(new Date()); 
 
-  // Dados
-const [data, setData] = useState({ 
+  // Dados com Tipagem
+  const [data, setData] = useState<DashboardDataWithCounts>({ 
       balance: 0, 
       income: {total: 0, received: 0, pending: 0, count: 0}, 
       expense: {total: 0, paid: 0, pending: 0, count: 0},
       counts: { incPaid: 0, incPend: 0, expPaid: 0, expPend: 0 }
   });
-  const [markedDates, setMarkedDates] = useState({});
-  const [dayTransactions, setDayTransactions] = useState([]);
-  const [overdueItems, setOverdueItems] = useState([]);
+  
+  const [markedDates, setMarkedDates] = useState<any>({});
+  const [dayTransactions, setDayTransactions] = useState<Transaction[]>([]);
+  const [overdueItems, setOverdueItems] = useState<Transaction[]>([]);
 
   // Modals
   const [showForecast, setShowForecast] = useState(false);
   const [showOverdueModal, setShowOverdueModal] = useState(false);
   const [forecastData, setForecastData] = useState({ income: 0, expense: 0 });
-  const [showDetailsType, setShowDetailsType] = useState(null); 
-  const [detailsList, setDetailsList] = useState([]);
+  const [showDetailsType, setShowDetailsType] = useState<string | null>(null); 
+  const [detailsList, setDetailsList] = useState<Transaction[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -60,15 +60,15 @@ const [data, setData] = useState({
   );
 
   const loadData = () => {
-    // Usamos o mês visualizado no header (viewMonth) para carregar os dados macro
+    if (!currentProfile) return;
+
     const monthStr = format(viewMonth, 'yyyy-MM');
     
     // Processa fixos para o mês visualizado
     processFixedTransactions(currentProfile.id, format(viewMonth, 'yyyy-MM-dd'));
 
     const dashData = getDashboardData(currentProfile.id, monthStr, currentProfile.settings_balance_mode);
-    setData(dashData);
-
+    
     const fore = getForecastData(currentProfile.id, monthStr);
     let fInc = 0, fExp = 0;
     fore.forEach(r => { if(r.type === 'income') fInc = r.total; else fExp = r.total; });
@@ -89,14 +89,13 @@ const [data, setData] = useState({
     // Atualiza o estado mesclando os dados do dashboard com as contagens
     setData({ ...dashData, counts });
 
-    const marks = {};
+    const marks: any = {};
     allMonthTrans.forEach(tr => {
       const dotColor = tr.type === 'income' ? '#4CAF50' : '#F44336';
       if (!marks[tr.date]) marks[tr.date] = { dots: [] };
       if (marks[tr.date].dots.length < 3) marks[tr.date].dots.push({ color: dotColor });
     });
     
-    // Marca o dia selecionado (apenas se ele pertencer ao mês atual visualizado)
     if (selectedDate.startsWith(monthStr)) {
         marks[selectedDate] = { ...marks[selectedDate], selected: true, selectedColor: theme.colors.primary, selectedTextColor: '#fff' };
     }
@@ -110,47 +109,45 @@ const [data, setData] = useState({
     }
   };
 
-  // --- Navegação do Mês ---
-  const changeMonth = (direction) => {
+  const changeMonth = (direction: 'next' | 'prev') => {
     const newDate = direction === 'next' ? addMonths(viewMonth, 1) : subMonths(viewMonth, 1);
     setViewMonth(newDate);
-    // Ao mudar mês, seleciona o dia 1 daquele mês por padrão
     setSelectedDate(format(newDate, 'yyyy-MM-01')); 
   };
 
-  const handlePayOverdue = (id) => {
+  const handlePayOverdue = (id: number) => {
     markAsPaid(id);
     notifyUpdate();
   };
 
-  const openTypeDetails = (type) => {
+  const openTypeDetails = (type: string) => {
+    if (!currentProfile) return;
     const monthStr = format(viewMonth, 'yyyy-MM');
     const list = getMonthTransactionsByType(currentProfile.id, monthStr, type);
     setDetailsList(list);
     setShowDetailsType(type);
   };
 
-  const handleToggleStatus = (item) => {
+  const handleToggleStatus = (item: Transaction) => {
+    if (item.id === undefined) return;
     toggleTransactionStatus(item.id, item.is_paid);
     notifyUpdate(); 
   };
 
-  const handleEdit = (item) => {
+  const handleEdit = (item: Transaction) => {
     setShowDetailsType(null); 
-    router.push({ pathname: '/add-transaction', params: { id: item.id } });
+    // Passando o ID como string para a rota
+    router.push({ pathname: './add-transaction', params: { id: String(item.id) } });
   };
 
-  // Configuração dos Gráficos Pizza
   const chartConfig = {
     color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
   };
 
   const labelColor = theme.colors.onSurface;
 
-// Gráfico Receita
   const incomeChartData = [
     { 
-        // Adiciona (x) ao nome. A porcentagem é adicionada automaticamente pelo gráfico
         name: `Recebido (${data.counts?.incPaid || 0})`, 
         amount: data.income.received, 
         color: '#4CAF50', 
@@ -160,13 +157,12 @@ const [data, setData] = useState({
     { 
         name: `Pendente (${data.counts?.incPend || 0})`, 
         amount: data.income.pending, 
-        color: theme.dark ? '#B0BEC5' : '#E0E0E0', // Cinza claro para contraste no modo claro/escuro
+        color: theme.dark ? '#B0BEC5' : '#E0E0E0', 
         legendFontColor: labelColor, 
         legendFontSize: 12 
     },
   ];
 
-// Gráfico Despesa
   const expenseChartData = [
     { 
         name: `Pago (${data.counts?.expPaid || 0})`, 
@@ -184,19 +180,16 @@ const [data, setData] = useState({
     },
   ];
 
-  // Evita crash de gráfico vazio
-  const safeIncomeData = data.income.total > 0 ? incomeChartData : [{name:'-', amount:1, color:'#eee'}];
-  const safeExpenseData = data.expense.total > 0 ? expenseChartData : [{name:'-', amount:1, color:'#eee'}];
+  const safeIncomeData = data.income.total > 0 ? incomeChartData : [{name:'-', amount:1, color:'#eee', legendFontColor: 'transparent', legendFontSize: 0}];
+  const safeExpenseData = data.expense.total > 0 ? expenseChartData : [{name:'-', amount:1, color:'#eee', legendFontColor: 'transparent', legendFontSize: 0}];
 
   if (!currentProfile) return <View style={styles.loading}><Text>Carregando...</Text></View>;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       
-      {/* 1. Header Fixo: Perfil e Navegação de Mês */}
+      {/* Header Fixo */}
       <View style={{ backgroundColor: theme.colors.surfaceVariant, paddingTop: 20, paddingBottom: 1, elevation: 4, zIndex: 10 }}>
-        
-        {/* Navegação de Mês Customizada */}
         <View style={styles.monthHeader}>
             <IconButton icon="chevron-left" onPress={() => changeMonth('prev')} />
             <Text variant="headlineSmall" style={{ fontWeight: 'bold', textTransform: 'capitalize' }}>
@@ -208,7 +201,6 @@ const [data, setData] = useState({
 
       <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
         
-        {/* Banner de Atrasos (Se houver) */}
         {overdueItems.length > 0 && (
             <TouchableOpacity onPress={() => setShowOverdueModal(true)} style={[styles.overdueBanner, { backgroundColor: theme.colors.errorContainer }]}>
                  <Text style={{ color: theme.colors.onErrorContainer, fontWeight: 'bold' }}>
@@ -219,53 +211,28 @@ const [data, setData] = useState({
 
         <View style={styles.cardsContainer}>
           
-{/* Card de Saldo */}
+          {/* Card Saldo */}
           <Card style={[styles.card, { backgroundColor: theme.colors.secondaryContainer }]}>
-            {/* 1. Redução do padding vertical para compactar a altura */}
             <Card.Content style={{ paddingVertical: 12 }}>
-              
               <View style={{ alignItems: 'center' }}>
                   <Text variant="labelLarge" style={{ marginBottom: 4 }}>Saldo Disponível (Realizado)</Text>
-                  
-                  {/* 2. Texto do valor levemente reduzido (de displaySmall para headlineLarge) */}
                   <Text variant="headlineLarge" style={{ fontWeight: 'bold', color: theme.colors.onSecondaryContainer }}>
                     R$ {data.balance.toFixed(2)}
                   </Text>
               </View>
-              
-              {/* Divider com margem reduzida */}
               <Divider style={{ marginVertical: 8, backgroundColor: theme.colors.outlineVariant }} />
-              
-              {/* Botões (já com a lógica de ícones implementada anteriormente) */}
               <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
-                  <Button 
-                    mode="text" 
-                    icon="chart-line" 
-                    compact 
-                    onPress={() => setShowForecast(true)}
-                  >
-                    Ver Previsão
-                  </Button>
-                  
-                  <Button 
-                    mode="text" 
-                    icon="clock-alert-outline" 
-                    compact 
-                    textColor={theme.colors.error} 
-                    onPress={() => setShowOverdueModal(true)}
-                  >
+                  <Button mode="text" icon="chart-line" compact onPress={() => setShowForecast(true)}>Ver Previsão</Button>
+                  <Button mode="text" icon="clock-alert-outline" compact textColor={theme.colors.error} onPress={() => setShowOverdueModal(true)}>
                     Atrasadas ({overdueItems.length})
                   </Button>
               </View>
             </Card.Content>
           </Card>
           
-{/* Card Receita */}
+          {/* Card Receita */}
           <Card style={[styles.card, { backgroundColor: theme.dark ? '#1b3a1b' : '#E8F5E9' }]} onPress={() => openTypeDetails('income')}>
-            {/* Reduzi o padding vertical interno do Card */}
             <Card.Content style={{ paddingVertical: 2 }}> 
-                
-                {/* 1. Cabeçalho Compacto */}
                 <View style={{ marginBottom: 0 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Text variant="titleMedium" style={{ color: theme.dark ? '#81c784' : '#2E7D32', fontWeight: 'bold' }}>Receitas</Text>
@@ -274,10 +241,7 @@ const [data, setData] = useState({
                     <Divider style={{ marginVertical: 5, backgroundColor: theme.dark ? '#2E7D32' : '#C8E6C9' }} />
                 </View>
 
-                {/* 2. Corpo Compacto */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    
-                    {/* ESQUERDA: Valores e Legenda */}
                     <View style={{ flex: 1, marginRight: 8 }}>
                          <View style={{ marginBottom: 2 }}>
                             <Text variant="bodyMedium" style={{ color: theme.dark ? '#81c784' : '#2E7D32', marginBottom: 0, lineHeight: 20 }}>
@@ -287,8 +251,6 @@ const [data, setData] = useState({
                                 A Receber: R$ {data.income.pending.toFixed(2)}
                             </Text>
                          </View>
-
-                         {/* Legenda mais justa */}
                          <View>
                             {safeIncomeData.map((item, index) => (
                                 <View key={index} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 1 }}>
@@ -300,8 +262,6 @@ const [data, setData] = useState({
                             ))}
                          </View>
                     </View>
-
-                    {/* DIREITA: Gráfico */}
                     <View style={{ alignItems: 'center' }}>
                         <PieChart
                             data={safeIncomeData}
@@ -315,7 +275,6 @@ const [data, setData] = useState({
                             hasLegend={false} 
                         />
                     </View>
-
                 </View>
             </Card.Content>
           </Card>
@@ -323,7 +282,6 @@ const [data, setData] = useState({
           {/* Card Despesa */}
           <Card style={[styles.card, { backgroundColor: theme.dark ? '#3e1b1b' : '#FFEBEE' }]} onPress={() => openTypeDetails('expense')}>
              <Card.Content style={{ paddingVertical: 2 }}>
-                {/* 1. Cabeçalho Compacto */}
                 <View style={{ marginBottom: 0 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Text variant="titleMedium" style={{ color: theme.dark ? '#e57373' : '#C62828', fontWeight: 'bold' }}>Despesas</Text>
@@ -332,10 +290,7 @@ const [data, setData] = useState({
                     <Divider style={{ marginVertical: 5, backgroundColor: theme.dark ? '#C62828' : '#FFCDD2' }} />
                 </View>
 
-                {/* 2. Corpo Compacto */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    
-                    {/* ESQUERDA */}
                     <View style={{ flex: 1, marginRight: 8 }}>
                          <View style={{ marginBottom: 6 }}>
                             <Text variant="bodyMedium" style={{ color: theme.dark ? '#e57373' : '#C62828', marginBottom: 0, lineHeight: 20 }}>
@@ -345,8 +300,6 @@ const [data, setData] = useState({
                                 A Pagar: R$ {data.expense.pending.toFixed(2)}
                             </Text>
                          </View>
-
-                         {/* Legenda */}
                          <View>
                             {safeExpenseData.map((item, index) => (
                                 <View key={index} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 1 }}>
@@ -358,8 +311,6 @@ const [data, setData] = useState({
                             ))}
                          </View>
                     </View>
-
-                    {/* DIREITA */}
                     <View style={{ alignItems: 'center' }}>
                         <PieChart
                             data={safeExpenseData}
@@ -373,27 +324,18 @@ const [data, setData] = useState({
                             hasLegend={false}
                         />
                     </View>
-
                 </View>
             </Card.Content>
           </Card>
-
         </View>
 
-        {/* Calendário (Sem Header Padrão) */}
+        {/* Calendário */}
         <Card style={styles.calendarCard}>
           <Calendar
-            // Usa a data do header (viewMonth) como referência
             current={format(viewMonth, 'yyyy-MM-dd')} 
-            
-            // Oculta o header padrão pois criamos um customizado no topo
             renderHeader={() => null} 
-            
-            onDayPress={day => {
-                // Se clicar num dia de outro mês, muda a view também
-                const dayDate = new Date(day.timestamp); // ajustado para evitar timezone bug básico
+            onDayPress={(day: any) => {
                 const dayStr = day.dateString;
-                
                 if (dayStr.substring(0,7) !== format(viewMonth, 'yyyy-MM')) {
                     setViewMonth(new Date(dayStr));
                 }
@@ -401,9 +343,8 @@ const [data, setData] = useState({
             }}
             markingType={'multi-dot'}
             markedDates={markedDates}
-theme={{
-              // DESIGN ADAPTATIVO (Usa cores do tema)
-              calendarBackground: theme.colors.elevation.level1, // Fundo correto no dark/light
+            theme={{
+              calendarBackground: theme.colors.elevation.level1, 
               textSectionTitleColor: theme.colors.onSurfaceVariant,
               dayTextColor: theme.colors.onSurface,
               todayTextColor: theme.colors.primary,
@@ -416,7 +357,7 @@ theme={{
               'stylesheet.calendar.header': {
                 header: { height: 0, opacity: 0 }
               }
-            }}
+            } as any}
           />
         </Card>
 
@@ -452,14 +393,12 @@ theme={{
         </View>
       </ScrollView>
 
-      <FAB icon="plus" label="" style={[styles.fab, { backgroundColor: theme.colors.primary }]} color="white" onPress={() => router.push('/add-transaction')} />
+      <FAB icon="plus" label="" style={[styles.fab, { backgroundColor: theme.colors.primary }]} color="white" onPress={() => router.push('./add-transaction')} />
 
-{/* Modal Previsão */}
+      {/* Modal Previsão */}
       <Portal>
         <Dialog visible={showForecast} onDismiss={() => setShowForecast(false)}>
-            {/* ADICIONADO: { locale: ptBR } para traduzir o mês */}
             <Dialog.Title>Previsão {format(viewMonth, 'MMMM', { locale: ptBR })}</Dialog.Title>
-            
             <Dialog.Content>
                 <Text>Valores projetados (Pago + Pendente):</Text>
                 <Divider style={{ marginVertical: 10 }} />
@@ -480,13 +419,13 @@ theme={{
                 {overdueItems.length === 0 ? <Text style={{padding:20}}>Nenhuma conta atrasada.</Text> : (
                     <FlatList
                         data={overdueItems}
-                        keyExtractor={item => item.id.toString()}
+                        keyExtractor={item => String(item.id)}
                         renderItem={({item}) => (
                             <List.Item
                                 title={item.description}
                                 description={`Venceu em: ${format(new Date(item.date), 'dd/MM/yyyy')}`}
                                 left={props => <List.Icon {...props} icon="alert-circle" color="red" />}
-                                right={() => <Button mode="contained-tonal" compact onPress={() => { handlePayOverdue(item.id); setShowOverdueModal(false); }}>Pagar</Button>}
+                                right={() => <Button mode="contained-tonal" compact onPress={() => { if(item.id) { handlePayOverdue(item.id); setShowOverdueModal(false); } }}>Pagar</Button>}
                             />
                         )}
                     />
@@ -496,7 +435,7 @@ theme={{
         </View>
       </Modal>
 
-      {/* Modal Lista Detalhada (Inalterado) */}
+      {/* Modal Lista Detalhada */}
       <Modal visible={!!showDetailsType} animationType="slide" transparent={true} onRequestClose={() => setShowDetailsType(null)}>
         <View style={styles.modalFull}>
             <View style={[styles.modalBody, { backgroundColor: theme.colors.background }]}>
@@ -505,7 +444,7 @@ theme={{
                 </Text>
                 <FlatList
                     data={detailsList}
-                    keyExtractor={item => item.id.toString()}
+                    keyExtractor={item => String(item.id)}
                     renderItem={({item}) => {
                         const isPaid = item.is_paid === 1;
                         let iconName = isPaid ? 'cash-check' : 'checkbox-blank-circle-outline';
@@ -547,7 +486,6 @@ const styles = StyleSheet.create({
   transactionsContainer: { padding: 16 },
   fab: { position: 'absolute', margin: 16, right: 0, bottom: 20 },
   overdueBanner: { padding: 10, marginHorizontal: 16, marginTop: 10, borderRadius: 8, alignItems: 'center' },
-  linkButton: { padding: 5 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
   modalFull: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalBody: { height: '85%', borderTopLeftRadius: 20, borderTopRightRadius: 20 }

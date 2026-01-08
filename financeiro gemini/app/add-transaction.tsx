@@ -6,13 +6,13 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFinanceStore } from '../src/store/useFinanceStore';
 import { addTransaction, getCategories, getTransactionById, updateTransaction, Category, Transaction } from '../src/database/db';
 import * as Notifications from 'expo-notifications';
-import * as Crypto from 'expo-crypto'; 
 
 export default function AddTransaction() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
   
+  // CORREÇÃO 1: Adicionado notifyUpdate aqui para usar a versão real do Store
   const { currentProfile, notifyUpdate } = useFinanceStore();
 
   const isEditing = !!params.id;
@@ -32,6 +32,7 @@ export default function AddTransaction() {
   const [isFixed, setIsFixed] = useState(false);
   const [showRepeatMenu, setShowRepeatMenu] = useState(false);
 
+  // Carregar dados na Edição
   useEffect(() => {
     if (isEditing && params.id) {
         const tx = getTransactionById(params.id);
@@ -47,14 +48,22 @@ export default function AddTransaction() {
     }
   }, [params.id, isEditing]);
 
+  // Carregar Categorias
+  // CORREÇÃO 2: Removido 'category' das dependências. 
+  // Isso impedia que a seleção do usuário persistisse, pois o efeito rodava e resetava o valor.
   useEffect(() => {
     if (currentProfile) {
+        // Busca categorias (incluindo 'both' se for o caso)
+        // O 3º parametro share=0 ou 1 depende da sua config, aqui puxando do array ou padrão 0
         const share = (currentProfile.settings_share_categories && currentProfile.settings_share_categories) ? 1 : 0;
         const cats = getCategories(currentProfile.id, type, share);
         
         setCategoriesList(cats);
         
+        // Define categoria padrão apenas se não estiver editando e se a lista mudou drasticamente (ex: mudou de receita para despesa)
+        // Ou se a categoria atual estiver vazia
         if (!isEditing && cats.length > 0) {
+            // Verifica se a categoria atual ainda é válida para o novo tipo
             const currentIsValid = cats.find(c => c.name === category);
             if (!currentIsValid) {
                 setCategory(cats[0].name);
@@ -63,19 +72,12 @@ export default function AddTransaction() {
             setCategory(cats[0].name);
         }
     }
-  }, [type, currentProfile, isEditing]); 
+  }, [type, currentProfile, isEditing]); // Removido 'category' daqui
 
   const handleSave = async () => {
     if (!amount || !currentProfile) return Alert.alert("Erro", "Preencha o valor.");
 
     const finalStatus = isDone ? 1 : 0;
-
-    // --- CORREÇÃO: Inicializa como undefined para satisfazer a interface Transaction ---
-    let repeatGroupId: string | undefined = undefined; 
-    if (!isEditing && (isFixed || repeatMonths > 1)) {
-        repeatGroupId = Crypto.randomUUID();
-    }
-    // -------------------------------------------------------------
 
     const transactionData: Partial<Transaction> = {
       profile_id: currentProfile.id,
@@ -86,7 +88,6 @@ export default function AddTransaction() {
       date: date.toISOString().split('T')[0],
       is_paid: finalStatus,
       is_fixed: isFixed ? 1 : 0, 
-      repeat_group_id: repeatGroupId // Agora compatível (string | undefined)
     };
 
     try {
@@ -105,7 +106,7 @@ export default function AddTransaction() {
         }
       }
 
-      notifyUpdate(); 
+      notifyUpdate(); // Agora chama a função correta do store
       router.back();
     } catch (e) {
       console.error(e);
@@ -225,6 +226,7 @@ export default function AddTransaction() {
         </Button>
       </View>
 
+      {/* Modal de Categoria */}
       <Modal visible={showCatModal} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
             <View style={[styles.modalContent, { backgroundColor: theme.colors.elevation.level3 }]}>

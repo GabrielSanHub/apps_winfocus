@@ -6,7 +6,6 @@ import { useFinanceStore } from '../../src/store/useFinanceStore';
 import { 
   getRecurringAndFixedGroups, 
   deleteTransactionGroup, 
-  deleteTransactionGroupLegacy, // <--- Importada a nova função
   getCategories, 
   addCategory, 
   updateCategory,
@@ -40,7 +39,7 @@ export default function Settings() {
     currentProfile, 
     setCurrentProfile,
     notifyUpdate,
-    updateCurrentProfileLocal
+    updateCurrentProfileLocal // Importante para os switches funcionarem
   } = useFinanceStore();  
   
   const [recurringGroups, setRecurringGroups] = useState<RecurringGroup[]>([]);
@@ -51,10 +50,12 @@ export default function Settings() {
   const [catType, setCatType] = useState('expense');
   const [editingCat, setEditingCat] = useState<Category | null>(null);
 
+  // Estado para a Animação de Reset
   const [isResetting, setIsResetting] = useState(false);
 
   const loadSettingsData = () => {
     if (currentProfile) {
+        // Cast para any[] para evitar erro de tipo com o campo 'count' extra
         const groups = getRecurringAndFixedGroups(currentProfile.id) as any[]; 
         setRecurringGroups(groups);
         
@@ -142,7 +143,7 @@ export default function Settings() {
   };
 
   // --- OUTRAS FUNÇÕES ---
-  const handleDeleteGroup = (group: RecurringGroup) => {
+  const handleDeleteGroup = (groupId: string) => {
     Alert.alert(
       "Parar Recorrência",
       "Isso apagará apenas os lançamentos FUTUROS ou pendentes. Histórico pago será mantido.",
@@ -151,12 +152,7 @@ export default function Settings() {
         { 
           text: "Confirmar", style: 'destructive',
           onPress: () => { 
-              // Se tiver ID de grupo, apaga pelo ID. Se não (legado), apaga por descrição.
-              if (group.repeat_group_id) {
-                  deleteTransactionGroup(group.repeat_group_id); 
-              } else if (currentProfile) {
-                  deleteTransactionGroupLegacy(group.description, group.amount, currentProfile.id);
-              }
+              deleteTransactionGroup(groupId); 
               notifyUpdate(); 
               loadSettingsData(); 
           }
@@ -175,12 +171,17 @@ export default function Settings() {
             { 
                 text: "SIM, APAGAR TUDO", style: 'destructive', 
                 onPress: () => {
+                    // 1. Ativa tela de loading
                     setIsResetting(true);
+                    
+                    // 2. Limpa banco
                     clearAllProfileTransactions(currentProfile.id);
+                    
+                    // 3. Aguarda e reinicia
                     setTimeout(() => {
                         notifyUpdate();
                         setIsResetting(false);
-                        router.replace("./(tabs)/"); 
+                        router.replace("./(tabs)/"); // Força ida para Home
                     }, 2000);
                 }
             }
@@ -196,11 +197,18 @@ export default function Settings() {
 
   const handleUpdateConfig = (key: string, value: any) => {
       if(!currentProfile) return;
+      
+      // 1. Atualiza UI localmente (Optimistic Update) para o switch não voltar
       updateCurrentProfileLocal(key, value);
+      
+      // 2. Salva no Banco
       updateProfileConfig(currentProfile.id, key, value);
+      
+      // 3. Notifica store (opcional)
       notifyUpdate();
   };
 
+  // TELA DE RESET
   if (isResetting) {
       return (
           <View style={{ flex: 1, backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center' }}>
@@ -215,6 +223,7 @@ export default function Settings() {
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
         <ScrollView style={styles.container}>
         
+        {/* SELETOR DE PERFIL */}
         <View style={{ padding: 16 }}>
             <Text variant="titleMedium" style={{ marginBottom: 10, textAlign: 'center' }}>Perfil Ativo</Text>
             <SegmentedButtons
@@ -289,12 +298,12 @@ export default function Settings() {
                 <Text style={{padding: 16, color: theme.colors.outline, textAlign: 'center'}}>Nenhuma recorrência ativa.</Text> 
                 : recurringGroups.map((group, index) => (
                 <List.Item
+                    // Chave única composta para evitar erro de duplicidade
                     key={`${group.repeat_group_id || 'grp'}-${group.id || index}`}
                     title={group.description}
                     description={group.is_fixed ? "Fixo Mensal" : `${group.count} parcelas restantes`}
                     left={props => <List.Icon {...props} icon={group.is_fixed ? "pin" : "refresh"} />}
-                    // --- CORREÇÃO: Passa o objeto 'group' inteiro para a função de deletar ---
-                    right={() => <IconButton icon="trash-can-outline" onPress={() => handleDeleteGroup(group)} />}
+                    right={() => <IconButton icon="trash-can-outline" onPress={() => handleDeleteGroup(group.repeat_group_id)} />}
                 />
             ))}
         </List.Section>

@@ -95,9 +95,17 @@ export default function Dashboard() {
       const isIncome = tr.type === 'income' || tr.type === 'INCOME';
       const dotColor = isIncome ? '#4CAF50' : '#F44336';
       
-      const dateKey = tr.date.split('T')[0]; 
-      if (!marks[dateKey]) marks[dateKey] = { dots: [] };
-      if (marks[dateKey].dots.length < 3) marks[dateKey].dots.push({ color: dotColor });
+      // --- CORREÇÃO: Garante formato de data correto ---
+      // Se tiver 'T' (ISO), corta. Se não tiver (YYYY-MM-DD), usa direto.
+      let dateKey = tr.date;
+      if (dateKey && dateKey.includes('T')) {
+          dateKey = dateKey.split('T')[0];
+      }
+      
+      if (dateKey) {
+          if (!marks[dateKey]) marks[dateKey] = { dots: [] };
+          if (marks[dateKey].dots.length < 3) marks[dateKey].dots.push({ color: dotColor });
+      }
     });
     
     // Marca a data selecionada
@@ -131,6 +139,7 @@ export default function Dashboard() {
   const changeMonth = (direction: 'next' | 'prev') => {
     const newDate = direction === 'next' ? addMonths(viewMonth, 1) : subMonths(viewMonth, 1);
     setViewMonth(newDate);
+    // Ao mudar o mês, reseta a data selecionada para o dia 1, senão pode dar conflito visual
     setSelectedDate(format(newDate, 'yyyy-MM-01')); 
   };
 
@@ -356,6 +365,11 @@ export default function Dashboard() {
         {/* Calendário */}
         <Card style={styles.calendarCard}>
           <Calendar
+            // --- CORREÇÃO IMPORTANTE: ---
+            // A prop 'key' força o componente a ser recriado quando o mês muda,
+            // garantindo que as bolinhas (markedDates) sejam redesenhadas.
+            key={viewMonth.toISOString()} 
+            // ----------------------------
             current={format(viewMonth, 'yyyy-MM-dd')} 
             renderHeader={() => null} 
             onDayPress={(day: any) => {

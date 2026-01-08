@@ -146,3 +146,22 @@ npx expo start --clear
 
 # console 2
 node backend/server.js
+
+=================================================================
+6. Comandos do Docker
+=================================================================
+
+# Buildar e Subir:
+docker compose up --build -d
+<!-- O -d roda em background. -->
+
+docker compose build --no-cache backend
+
+# Verificar Logs:
+docker compose logs -f backend
+
+# Parar
+docker compose down
+
+# Acessar 
+Abra http://localhost:8080. O Frontend carregará. Requisições para /api/... serão roteadas internamente para o backend.

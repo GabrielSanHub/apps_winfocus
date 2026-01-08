@@ -1,62 +1,85 @@
 import { create } from 'zustand';
-import { getProfiles, updateProfileSettings, Profile } from '../database/db';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { 
+  addTransactionDB, 
+  getTransactionsDB, 
+  initDB, 
+  Transaction, 
+  getPendingTransactionsDB, 
+  markAsSyncedDB 
+} from '../database/db';
+import * as Crypto from 'expo-crypto'; // Instale: npx expo install expo-crypto
 
-interface FinanceState {
-  profiles: Profile[];
-  currentProfile: Profile | null;
-  refreshKey: number;
-  themeMode: 'system' | 'light' | 'dark';
-  
-  loadProfiles: () => void;
-  setCurrentProfile: (profile: Profile) => void;
-  updateProfileConfig: (field: string, value: any) => void;
-  notifyUpdate: () => void;
-  setThemeMode: (mode: 'system' | 'light' | 'dark') => Promise<void>;
-  loadTheme: () => Promise<void>;
+// URL da API (Ajuste para seu IP local se estiver testando no celular ou localhost no emulador)
+// Emulador Android usa 10.0.2.2. Web usa localhost.
+const API_URL = 'http://localhost:8080/api'; 
+
+interface FinanceStore {
+  transactions: Transaction[];
+  loadTransactions: () => void;
+  addTransaction: (transaction: Omit<Transaction, 'id' | 'client_uuid' | 'sync_status'>) => Promise<void>;
+  syncData: () => Promise<void>; // Nova ação
 }
 
-const useFinanceStore = create<FinanceState>((set, get) => ({
-  profiles: [],
-  currentProfile: null,
-  refreshKey: 0,
-  themeMode: 'system',
+export const useFinanceStore = create<FinanceStore>((set, get) => ({
+  transactions: [],
 
-  loadProfiles: () => {
-    const data = getProfiles();
-    // Tenta manter o perfil atual se existir
-    const current = get().currentProfile;
-    if (current) {
-        const updatedCurrent = data.find(p => p.id === current.id);
-        set({ profiles: data, currentProfile: updatedCurrent || data[0] });
-    } else {
-        set({ profiles: data, currentProfile: data[0] });
-    }
+  loadTransactions: () => {
+    initDB();
+    const data = getTransactionsDB();
+    set({ transactions: data });
   },
 
-  setCurrentProfile: (profile) => set({ currentProfile: profile }),
+  addTransaction: async (newTx) => {
+    // 1. Gera UUID único para esta transação
+    const client_uuid = Crypto.randomUUID();
 
-  updateProfileConfig: (field, value) => {
-    const { currentProfile, loadProfiles, notifyUpdate } = get();
-    if (!currentProfile) return;
-    updateProfileSettings(currentProfile.id, field, value);
-    loadProfiles(); // Recarrega para atualizar o objeto currentProfile
-    notifyUpdate();
+    // 2. Prepara objeto completo
+    const txData = {
+      ...newTx,
+      client_uuid,
+    };
+
+    // 3. Salva no SQLite (Offline first)
+    addTransactionDB(txData);
+
+    // 4. Atualiza UI imediatamente
+    get().loadTransactions();
+
+    // 5. Tenta sincronizar com a nuvem (Fire and Forget)
+    // Se falhar (sem net), fica no SQLite como 'PENDING'
+    get().syncData(); 
   },
 
-  notifyUpdate: () => set((state) => ({ refreshKey: state.refreshKey + 1 })),
+  syncData: async () => {
+    try {
+      // 1. Busca pendentes
+      const pending = getPendingTransactionsDB();
+      if (pending.length === 0) return;
 
-  setThemeMode: async (mode) => {
-    set({ themeMode: mode });
-    await AsyncStorage.setItem('themeMode', mode);
-  },
+      console.log(`Tentando sincronizar ${pending.length} itens...`);
 
-  loadTheme: async () => {
-    const saved = await AsyncStorage.getItem('themeMode');
-    if (saved === 'light' || saved === 'dark' || saved === 'system') {
-        set({ themeMode: saved });
+      // 2. Envia para o Backend
+      const response = await fetch(`${API_URL}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          transactions: pending,
+          userId: 1 // Hardcoded para teste
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // 3. Marca como sincronizado no SQLite
+        if (data.synced && data.synced.length > 0) {
+          markAsSyncedDB(data.synced);
+          console.log('Sincronização concluída!');
+          // Atualiza lista na UI para refletir status (se quiser mostrar ícone de check)
+          get().loadTransactions();
+        }
+      }
+    } catch (error) {
+      console.log('Sem conexão ou erro no servidor. Dados mantidos localmente.');
     }
   }
 }));
-
-export default useFinanceStore;

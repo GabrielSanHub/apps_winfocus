@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Serviço do Backend
+  backend:
+    build: ./backend
+    container_name: winfocus_backend
+    restart: always
+    environment:
+      - PORT=3000
+      - DB_HOST=winfocus.com.br
+      - DB_USER=developer_app
+      - DB_PASS=wst@2023!
+      - DB_NAME=hub_financeiro
+    depends_on:
+      - db_mysql
+    networks:
+      - app-network
+
+  # Serviço do Frontend (Nginx servindo o build)
+  frontend:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: winfocus_frontend
+    restart: always
+    ports:
+      - "8080:80" # Acesso no navegador: localhost:8080
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  # Banco de Dados Local (para dev/teste)
+  db_mysql:
+    image: mysql:8.0
+    container_name: hub_financeiro
+    cap_add:
+      - SYS_NICE # Hack para rodar MySQL 8 sem problemas em alguns Docker
+    environment:
+      MYSQL_ROOT_PASSWORD: wst@2023!
+      MYSQL_DATABASE: hub_financeiro
+    volumes:
+      - db_data:/var/lib/mysql # Persistência de dados
+    networks:
+      - app-network
+
+# Definição de volumes para persistência
+volumes:
+  db_data:
+
+# Definição de rede para comunicação interna
+networks:
+  app-network:
+    driver: bridge

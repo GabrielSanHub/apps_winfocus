@@ -1,42 +1,85 @@
-// backend/server.ts
-import express, { Request, Response } from 'express';
+import express from 'express';
 import cors from 'cors';
-import bodyParser from 'body-parser';
+import mysql from 'mysql2/promise';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
-const PORT = 3000;
-
-// Permite que seu celular e o navegador acessem este servidor
+app.use(express.json());
 app.use(cors());
-app.use(bodyParser.json());
 
-// Interface genérica para o que vier no sync
-interface Task {
-  [key: string]: any;
-}
-
-// Banco de dados falso (em memória RAM)
-let tasksBackup: Task[] = [];
-
-// Rota de Teste
-app.get('/', (req: Request, res: Response) => {
-    res.send('Servidor Backend rodando perfeitamente!');
+// 1. Configuração da Conexão (Pool de conexões é mais eficiente)
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'db_mysql', // Nome do serviço no Docker ou IP da nuvem
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASS || 'rootpassword',
+  database: process.env.DB_NAME || 'hub_financeiro',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-// Rota para receber tarefas do App (Sincronização)
-app.post('/sync', (req: Request, res: Response) => {
-    const { tasks } = req.body;
-    
-    if (!tasks || !Array.isArray(tasks)) {
-        res.status(400).json({ message: 'Formato inválido. Esperado array de tasks.' });
-        return;
+// 2. Rota de Sincronização (Recebe dados do App)
+app.post('/api/sync', async (req, res) => {
+  const { transactions, userId } = req.body;
+
+  if (!transactions || !Array.isArray(transactions)) {
+    return res.status(400).json({ error: 'Formato inválido' });
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const syncedIds: string[] = [];
+
+    for (const tx of transactions) {
+      // Lógica "Upsert": Se o UUID já existe, atualiza. Se não, cria.
+      // Isso evita duplicidade se o usuário enviar a mesma transação 2x por falha de rede.
+      const query = `
+        INSERT INTO transactions 
+        (user_id, description, amount, type, date, category, client_uuid, last_modified_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE 
+        description = VALUES(description),
+        amount = VALUES(amount),
+        type = VALUES(type),
+        date = VALUES(date),
+        category = VALUES(category),
+        last_modified_at = VALUES(last_modified_at)
+      `;
+
+      await connection.execute(query, [
+        userId || 1, // Temporário: Em produção pegue do token de auth
+        tx.description,
+        tx.amount,
+        tx.type,
+        new Date(tx.date),
+        tx.category,
+        tx.client_uuid,
+        new Date(tx.last_modified_at || Date.now())
+      ]);
+
+      syncedIds.push(tx.client_uuid);
     }
 
-    console.log('Recebi tarefas do App:', tasks);
-    tasksBackup = tasks; // Salva na memória do servidor
-    res.json({ message: 'Dados sincronizados com sucesso!', count: tasks.length });
+    await connection.commit();
+    
+    // Retorna para o App quais UUIDs foram salvos com sucesso
+    res.json({ synced: syncedIds });
+
+  } catch (error) {
+    await connection.rollback();
+    console.error('Erro no sync:', error);
+    res.status(500).json({ error: 'Erro ao processar sincronização' });
+  } finally {
+    connection.release();
+  }
 });
 
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`Backend rodando na porta ${PORT}`);
 });

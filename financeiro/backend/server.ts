@@ -12,6 +12,7 @@ app.use(cors());
 // 1. Configuração da Conexão (Pool de conexões é mais eficiente)
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'winfocus.com.br', // Nome do serviço no Docker ou IP da nuvem
+  port: Number(process.env.DB_PORT) || 3306,
   user: process.env.DB_USER || 'developer_app',
   password: process.env.DB_PASS || 'wst@2023!',
   database: process.env.DB_NAME || 'hub_financeiro',
@@ -36,6 +37,22 @@ app.post('/api/sync', async (req, res) => {
   if (!userId) {
       return res.status(400).json({ error: 'ID do usuário não fornecido.' });
   }
+
+  pool.getConnection()
+  .then(connection => {
+    console.log('✅ SUCESSO: Conectado ao banco de dados externo!');
+    connection.release();
+  })
+  .catch(err => {
+    console.error('❌ ERRO CRÍTICO: Não foi possível conectar ao banco de dados.');
+    console.error('Motivo:', err.message); // Vai dizer se é senha, IP, porta, etc.
+    if (err.code === 'ECONNREFUSED') {
+        console.error('DICA: Verifique se o IP/Host está correto e se a porta 3306 está aberta no servidor.');
+    }
+    if (err.code === 'ER_ACCESS_DENIED_ERROR') {
+        console.error('DICA: Verifique se o usuário e senha estão corretos e se o usuário tem permissão de acesso remoto.');
+    }
+  });
 
   const connection = await pool.getConnection();
 

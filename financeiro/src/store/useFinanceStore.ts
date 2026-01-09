@@ -199,13 +199,13 @@ syncData: async () => {
       const pending = getPendingTransactionsDB();
       if (pending.length === 0) return;
 
-      // CORREÇÃO 1: Pegar o ID real do usuário logado (server_id)
       const { user } = get();
       const targetUserId = user?.server_id;
 
+      // CORREÇÃO: Evita o erro se o usuário for offline ou o registro falhou anteriormente
       if (!targetUserId) {
-        console.error("Erro no Sync: Usuário não possui ID do servidor vinculado.");
-        return;
+        console.log("Sync ignorado: Usuário offline ou sem ID do servidor vinculado.");
+        return; 
       }
 
       console.log(`Iniciando sincronização para user ${targetUserId} com ${pending.length} itens.`);
@@ -215,7 +215,7 @@ syncData: async () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
             transactions: pending, 
-            userId: targetUserId // Usa o ID dinâmico
+            userId: targetUserId 
         }),
       });
 
@@ -224,17 +224,14 @@ syncData: async () => {
         if (data.synced?.length > 0) {
           markAsSyncedDB(data.synced);
           get().loadTransactions();
-          // Atualiza status visual
           get().checkSyncStatus(); 
           console.log('Sincronização concluída com sucesso.');
         }
       } else {
-        // CORREÇÃO 2: Ler o erro que vem do backend
         const errorText = await response.text();
         console.error('Erro no Backend:', errorText);
       }
     } catch (e) {
-      // CORREÇÃO 3: Logar o erro real de rede/código
       console.error('Erro de Conexão/Sync:', e);
     }
   },

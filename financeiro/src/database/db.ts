@@ -132,12 +132,36 @@ export const initDB = () => {
 
 export const registerUserLocal = (name: string, email: string, hash: string, serverId?: number) => {
   try {
-    db.runSync(
-      `INSERT INTO users (name, email, password_hash, server_id, sync_preference) 
-       VALUES (?, ?, ?, ?, 'ask')`,
-      [name, email, hash, serverId || null]
-    );
-    return getUserByEmail(email);
+    // 1. Verifica se o usuário já existe pelo e-mail
+    const existingUser = getUserByEmail(email);
+
+    if (existingUser) {
+      // 2. Se existe, ATUALIZA os dados em vez de inserir
+      let query = 'UPDATE users SET name = ?, password_hash = ?';
+      const params: any[] = [name, hash];
+      
+      // Se veio um ID do servidor (login online), atualiza também
+      if (serverId) {
+        query += ', server_id = ?';
+        params.push(serverId);
+      }
+      
+      query += ' WHERE id = ?';
+      params.push(existingUser.id);
+      
+      db.runSync(query, params);
+      
+      // Retorna o usuário atualizado
+      return getUserByEmail(email);
+    } else {
+      // 3. Se NÃO existe, insere um novo (código original)
+      db.runSync(
+        `INSERT INTO users (name, email, password_hash, server_id, sync_preference) 
+         VALUES (?, ?, ?, ?, 'ask')`,
+        [name, email, hash, serverId || null]
+      );
+      return getUserByEmail(email);
+    }
   } catch (e) {
     console.error("Erro ao registrar localmente", e);
     throw e;

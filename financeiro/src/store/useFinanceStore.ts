@@ -59,7 +59,9 @@ export const useFinanceStore = create<FinanceStore>((set, get) => ({
   user: null,
   syncStatus: 'offline',
 
-login: async (email, password) => {
+// Em financeiro/src/store/useFinanceStore.ts
+
+  login: async (email, password) => {
     // 1. Tenta Login Online
     try {
       const res = await fetch(`${API_URL}/auth/login`, {
@@ -71,32 +73,35 @@ login: async (email, password) => {
       if (res.ok) {
         const serverUser = await res.json();
         
-        // Busca usuário local
+        // Sucesso Online: Atualiza ou cria localmente
         let localUser = getUserByEmail(email);
-        
         if (!localUser) {
-           // Se não existe localmente, cria já com o ID do servidor
            localUser = registerUserLocal(serverUser.name, email, password, serverUser.id);
         } else {
-           // Se já existe, atualiza o ID do servidor no banco local
            updateUserSyncPref(localUser.id, localUser.sync_preference, serverUser.id);
-           
-           // CORREÇÃO: Atualiza o objeto em memória também!
            localUser = { ...localUser, server_id: serverUser.id }; 
         }
 
-        // Agora salvamos no estado o usuário COM o server_id
         set({ user: localUser, syncStatus: 'synced' });
         get().loadProfiles(); 
         return true;
       }
     } catch (e) {
-      console.log('Login Online falhou, tentando offline...', e);
+      console.log('Login Online falhou (sem rede ou servidor off). Tentando local...', e);
     }
 
-    // 2. Fallback Login Offline (SQLite)
+    // 2. Fallback Login Offline (COM PROTEÇÃO)
     const localUser = loginUserLocal(email, password);
     if (localUser) {
+      // --- AQUI ESTÁ A PROTEÇÃO ---
+      // Se o usuário existe localmente, mas não tem ID do servidor,
+      // significa que o registro dele nunca chegou no banco. Bloqueie!
+      if (!localUser.server_id) {
+          console.error("Login bloqueado: Usuário inconsistente (sem ID do servidor).");
+          alert("Erro de Sincronização: Sua conta não foi confirmada no servidor. Conecte-se à internet e tente se registrar novamente."); 
+          return false;
+      }
+
       set({ user: localUser, syncStatus: 'offline' });
       get().loadProfiles();
       get().checkSyncStatus(); 
@@ -107,34 +112,48 @@ login: async (email, password) => {
   },
 
   register: async (name, email, password) => {
-    // Tenta registrar na nuvem primeiro
     let serverId = undefined;
+    
+    // 1. Tenta Registrar no Servidor (OBRIGATÓRIO AGORA)
     try {
       const res = await fetch(`${API_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password })
       });
-      if (res.ok) {
-        const data = await res.json();
-        serverId = data.id;
-      }
-    } catch (e) {
-      console.log('Registro Offline (sem rede)');
-    }
 
-    // Salva no SQLite
-    try {
-      const newUser = registerUserLocal(name, email, password, serverId);
-      set({ user: newUser });
-      
-      // Cria perfil padrão para o novo usuário
-      // (Lógica de criar perfil deve ser atualizada para aceitar user_id)
-      
-      return true;
+      if (!res.ok) {
+        const errorData = await res.text();
+        console.error("Erro no registro do servidor:", errorData);
+        // Se o servidor rejeitou (ex: email duplicado ou erro de banco), PARE.
+        return false; 
+      }
+
+      const data = await res.json();
+      serverId = data.id; // Pegamos o ID gerado pelo MySQL
+
     } catch (e) {
+      console.error('Falha de conexão no registro:', e);
+      // Se não conseguiu falar com o servidor, PARE.
+      // Não queremos criar usuários fantasmas locais.
+      alert("Sem conexão com o servidor. O cadastro requer internet.");
       return false;
     }
+
+    // 2. Só salva no SQLite se tivermos o serverId
+    try {
+      if (serverId) {
+        const newUser = registerUserLocal(name, email, password, serverId);
+        set({ user: newUser });
+        // Cria perfil padrão, etc...
+        return true;
+      }
+    } catch (e) {
+      console.error("Erro ao salvar localmente:", e);
+      return false;
+    }
+    
+    return false;
   },
 
   setSyncPreference: async (pref) => {

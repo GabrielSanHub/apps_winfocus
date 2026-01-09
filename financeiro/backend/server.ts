@@ -38,22 +38,6 @@ app.post('/api/sync', async (req, res) => {
       return res.status(400).json({ error: 'ID do usuário não fornecido.' });
   }
 
-  pool.getConnection()
-  .then(connection => {
-    console.log('✅ SUCESSO: Conectado ao banco de dados externo!');
-    connection.release();
-  })
-  .catch(err => {
-    console.error('❌ ERRO CRÍTICO: Não foi possível conectar ao banco de dados.');
-    console.error('Motivo:', err.message); // Vai dizer se é senha, IP, porta, etc.
-    if (err.code === 'ECONNREFUSED') {
-        console.error('DICA: Verifique se o IP/Host está correto e se a porta 3306 está aberta no servidor.');
-    }
-    if (err.code === 'ER_ACCESS_DENIED_ERROR') {
-        console.error('DICA: Verifique se o usuário e senha estão corretos e se o usuário tem permissão de acesso remoto.');
-    }
-  });
-
   const connection = await pool.getConnection();
 
   try {
@@ -150,6 +134,30 @@ app.post('/api/auth/login', async (req, res) => {
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
+
+const startServer = async () => {
+  try {
+    const connection = await pool.getConnection();
+    console.log('✅ BANCO DE DADOS CONECTADO COM SUCESSO!');
+    connection.release();
+
+    // Só inicia o Express se o banco funcionar
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+      console.log(`🚀 Servidor rodando na porta ${PORT}`);
+      console.log(`👉 Aguardando requisições do App...`);
+    });
+
+  } catch (err: any) {
+    console.error('❌ ERRO FATAL: O servidor não iniciou porque o banco de dados falhou.');
+    console.error('MOTIVO:', err.message);
+    if (err.code === 'ECONNREFUSED') console.error('-> Verifique o IP e a Porta.');
+    if (err.code === 'ER_ACCESS_DENIED_ERROR') console.error('-> Verifique Usuário e Senha.');
+    process.exit(1); // Encerra o processo com erro
+  }
+};
+
+startServer();
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

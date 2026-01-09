@@ -84,6 +84,11 @@ export const useFinanceStore = create<FinanceStore>((set, get) => ({
 
         set({ user: localUser, syncStatus: 'synced' });
         get().loadProfiles(); 
+
+        console.log("Login sucesso: Iniciando sincronização de pendências antigas...");
+        // Não usamos await aqui para não travar a tela de login, deixa rodar em background
+        get().syncData();
+
         return true;
       }
     } catch (e) {
@@ -203,14 +208,43 @@ export const useFinanceStore = create<FinanceStore>((set, get) => ({
     get().loadTransactions();
   },
 
-  addTransaction: async (newTx) => {
+addTransaction: async (newTx) => {
+    // 1. Preparação dos dados
     const client_uuid = Crypto.randomUUID();
     const profileId = get().currentProfile?.id || 1;
-    const txData = { ...newTx, client_uuid, profile_id: profileId };
+    const txData = { 
+        ...newTx, 
+        client_uuid, 
+        profile_id: profileId,
+        type: newTx.type || 'expense' // Garante padrão 'expense'
+    };
 
+    // 2. Salva Localmente (OFFLINE FIRST)
+    // Isso garante que o dado exista no celular instantaneamente
     addTransactionDB(txData);
+    
+    // Atualiza a UI para o usuário ver a transação nova
     get().loadTransactions();
-    get().syncData(); 
+
+    // 3. AUTO-SYNC: Tenta enviar imediatamente para a nuvem
+    const { user } = get();
+    
+    // Se o usuário tem ID do servidor, significa que está logado/sincronizado
+    if (user?.server_id) {
+      console.log('🔄 Tentando envio automático da nova transação...');
+      try {
+        // Chama a função de sincronização que já temos
+        await get().syncData();
+        
+        // Se der certo, o syncData já atualiza o status de PENDING para SYNCED
+        // e recarrega a lista, fazendo o ícone ficar verde.
+      } catch (e) {
+        // Se falhar (ex: sem internet momentânea), não faz nada.
+        // A transação continua salva localmente como 'PENDING' (amarelo)
+        // e será enviada na próxima vez.
+        console.log('⚠️ Envio automático falhou (sem rede?), mantendo offline por enquanto.');
+      }
+    }
   },
 
 syncData: async () => {

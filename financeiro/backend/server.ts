@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import bcrypt from 'bcrypt';
 
 dotenv.config();
 
@@ -33,7 +34,6 @@ app.post('/api/sync', async (req, res) => {
     return res.status(400).json({ error: 'Formato inválido' });
   }
 
-  // Verificação de segurança básica
   if (!userId) {
       return res.status(400).json({ error: 'ID do usuário não fornecido.' });
   }
@@ -42,13 +42,22 @@ app.post('/api/sync', async (req, res) => {
 
   try {
     await connection.beginTransaction();
-
     const syncedIds: string[] = [];
 
     for (const tx of transactions) {
-      // CORREÇÃO: Converter type para Maiúsculo para bater com o ENUM(INCOME, EXPENSE) do banco
-      // 
       const upperType = tx.type ? tx.type.toUpperCase() : 'EXPENSE';
+      
+      // --- CORREÇÃO DE DADOS (PROTEÇÃO) ---
+      // 1. Garante data válida (se falhar, usa data de hoje)
+      let finalDate = new Date(tx.date);
+      if (isNaN(finalDate.getTime())) {
+          console.warn(`Data inválida recebida para tx ${tx.description}. Usando data atual.`);
+          finalDate = new Date();
+      }
+
+      // 2. Garante categoria padrão
+      const finalCategory = tx.category || 'Geral';
+      // ------------------------------------
 
       const query = `
         INSERT INTO transactions 
@@ -67,9 +76,9 @@ app.post('/api/sync', async (req, res) => {
         userId, 
         tx.description,
         tx.amount,
-        upperType, // Usando o tipo tratado
-        new Date(tx.date),
-        tx.category,
+        upperType, 
+        finalDate,     // Usa a data tratada
+        finalCategory, // Usa a categoria tratada
         tx.client_uuid,
         new Date(tx.last_modified_at || Date.now())
       ]);
@@ -78,21 +87,20 @@ app.post('/api/sync', async (req, res) => {
     }
 
     await connection.commit();
-    console.log(`Sync sucesso: ${syncedIds.length} transações salvas para user ${userId}`);
-    
+    console.log(`Sync sucesso: ${syncedIds.length} transações processadas para user ${userId}`);
     res.json({ synced: syncedIds });
 
   } catch (error: any) {
     await connection.rollback();
-    // Importante: Isso vai mostrar no console do servidor o motivo exato (ex: FK constraint fails)
-    console.error('Erro CRÍTICO no sync:', error.message); 
-    res.status(500).json({ error: 'Erro ao processar sincronização: ' + error.message });
+    console.error('❌ ERRO NO SYNC:', error.message); 
+    // Retorna erro detalhado para o app saber o que houve
+    res.status(500).json({ error: 'Erro no Sync: ' + error.message });
   } finally {
     connection.release();
   }
 });
 
-// Rota de Registro
+// Rota de Registro (COM HASH)
 app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body;
   
@@ -102,34 +110,50 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(409).json({ error: 'Email já cadastrado' });
     }
 
+    // 1. Criptografa a senha antes de salvar
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
     const [result]: any = await pool.execute(
       'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
-      [name, email, password]
+      [name, email, passwordHash] // Salva o hash, não a senha pura
     );
     
     res.json({ id: result.insertId, name, email });
-} catch (error: any) {
-    console.error('ERRO REAL DO BANCO:', error.message); // Mostra no terminal do Docker
-    // Devolve o erro detalhado para o App (Frontend)
-    res.status(500).json({ error: 'Erro detalhado: ' + error.message });
+  } catch (error: any) {
+    console.error('❌ ERRO NO REGISTRO:', error.message); 
+    res.status(500).json({ error: 'Erro no servidor: ' + error.message });
   }
 });
 
-// Rota de Login
+// Rota de Login (COM COMPARAÇÃO DE HASH)
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   try {
+    // Busca o usuário e a senha criptografada (hash)
     const [rows]: any = await pool.execute(
-      'SELECT id, name, email FROM users WHERE email = ? AND password = ?', 
-      [email, password]
+      'SELECT id, name, email, password FROM users WHERE email = ?', 
+      [email]
     );
 
-    if (rows.length > 0) {
-      res.json(rows[0]);
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Credenciais inválidas' });
+    }
+
+    const user = rows[0];
+
+    // 2. Compara a senha enviada com o hash do banco
+    const match = await bcrypt.compare(password, user.password);
+
+    if (match) {
+      // Remove a senha do objeto antes de devolver para o app
+      const { password, ...userWithoutPass } = user;
+      res.json(userWithoutPass);
     } else {
       res.status(401).json({ error: 'Credenciais inválidas' });
     }
-  } catch (error) {
+  } catch (error: any) {
+    console.error('❌ ERRO NO LOGIN:', error.message);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });

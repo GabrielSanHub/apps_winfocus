@@ -6,7 +6,7 @@ import { useFinanceStore } from '../../src/store/useFinanceStore';
 import { 
   getRecurringAndFixedGroups, 
   deleteTransactionGroup, 
-  deleteTransactionGroupLegacy, // <--- Importada a nova função
+  deleteTransactionGroupLegacy, 
   getCategories, 
   addCategory, 
   updateCategory,
@@ -40,7 +40,9 @@ export default function Settings() {
     currentProfile, 
     setCurrentProfile,
     notifyUpdate,
-    updateCurrentProfileLocal
+    updateCurrentProfileLocal,
+    user,   // <--- Adicionado
+    logout  // <--- Adicionado
   } = useFinanceStore();  
   
   const [recurringGroups, setRecurringGroups] = useState<RecurringGroup[]>([]);
@@ -66,6 +68,26 @@ export default function Settings() {
   useEffect(() => {
     loadSettingsData();
   }, [currentProfile]);
+
+  // --- LÓGICA DE LOGOUT (NOVO) ---
+  const handleLogout = () => {
+    Alert.alert(
+      "Sair da Conta",
+      `Deseja desconectar a conta de ${user?.name}? Seus dados locais serão mantidos, mas a sincronização será pausada.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        { 
+          text: "Sair", 
+          style: "destructive",
+          onPress: () => {
+             logout();
+             // Redireciona para a raiz para que o Layout decida o fluxo (provavelmente modo offline)
+             router.replace('/'); 
+          }
+        }
+      ]
+    );
+  };
 
   // --- LÓGICA DE CATEGORIAS ---
   const openAddCategory = () => {
@@ -151,7 +173,6 @@ export default function Settings() {
         { 
           text: "Confirmar", style: 'destructive',
           onPress: () => { 
-              // Se tiver ID de grupo, apaga pelo ID. Se não (legado), apaga por descrição.
               if (group.repeat_group_id) {
                   deleteTransactionGroup(group.repeat_group_id); 
               } else if (currentProfile) {
@@ -293,7 +314,6 @@ export default function Settings() {
                     title={group.description}
                     description={group.is_fixed ? "Fixo Mensal" : `${group.count} parcelas restantes`}
                     left={props => <List.Icon {...props} icon={group.is_fixed ? "pin" : "refresh"} />}
-                    // --- CORREÇÃO: Passa o objeto 'group' inteiro para a função de deletar ---
                     right={() => <IconButton icon="trash-can-outline" onPress={() => handleDeleteGroup(group)} />}
                 />
             ))}
@@ -303,13 +323,29 @@ export default function Settings() {
 
         <List.Section>
             <List.Subheader style={{ color: theme.colors.error }}>Zona de Perigo</List.Subheader>
+            
             <List.Item
                 title="Limpar todas as contas"
-                description="Apaga tudo e reinicia o app"
+                description="Apaga tudo deste perfil e reinicia"
                 titleStyle={{ color: theme.colors.error, fontWeight: 'bold' }}
                 left={props => <List.Icon {...props} icon="alert-decagram" color={theme.colors.error} />}
                 onPress={handleClearAll}
             />
+
+            {/* --- BOTÃO DE LOGOUT ADICIONADO AQUI --- */}
+            {user && (
+                <View style={{ marginTop: 20, paddingHorizontal: 16 }}>
+                    <Button 
+                        mode="outlined" 
+                        icon="logout" 
+                        textColor={theme.colors.primary}
+                        onPress={handleLogout}
+                        style={{ borderColor: theme.colors.primary }}
+                    >
+                        Sair da Conta ({user.name})
+                    </Button>
+                </View>
+            )}
         </List.Section>
 
         <View style={{ height: 50 }} />

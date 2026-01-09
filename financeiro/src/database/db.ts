@@ -5,6 +5,16 @@ import { format, subMonths, parseISO, setDate, lastDayOfMonth } from 'date-fns';
 const db = SQLite.openDatabaseSync('financeiro.db');
 
 // --- INTERFACES ---
+
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  password_hash?: string; // Armazenado localmente para login offline
+  server_id?: number; // ID no MySQL
+  sync_preference: 'cloud' | 'local' | 'ask';
+}
+
 export interface Profile {
   id: number;
   name: string;
@@ -47,6 +57,19 @@ export interface DashboardDataWithCounts {
 // --- INICIALIZAÇÃO ---
 
 export const initDB = () => {
+
+  // Tabela de Usuários
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      server_id INTEGER,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      sync_preference TEXT DEFAULT 'ask' -- 'cloud', 'local', 'ask'
+    );
+  `);
+
   db.execSync(`
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,6 +85,7 @@ export const initDB = () => {
       is_fixed INTEGER DEFAULT 0,
       repeat_group_id TEXT
     );
+
     CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       profile_id INTEGER DEFAULT 1,
@@ -70,12 +94,15 @@ export const initDB = () => {
       icon TEXT,
       is_default INTEGER DEFAULT 0
     );
+
     CREATE TABLE IF NOT EXISTS profiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER, 
       name TEXT NOT NULL,
       type TEXT DEFAULT 'personal',
       settings_share_categories INTEGER DEFAULT 0,
-      settings_balance_mode TEXT DEFAULT 'monthly'
+      settings_balance_mode TEXT DEFAULT 'monthly',
+      FOREIGN KEY(user_id) REFERENCES users(id)
     );
     
     INSERT OR IGNORE INTO profiles (id, name, type) VALUES (1, 'Pessoal', 'personal');
@@ -96,6 +123,55 @@ export const initDB = () => {
     INSERT OR IGNORE INTO categories (name, type, icon, is_default, profile_id) 
     SELECT 'Lazer', 'expense', 'movie', 1, 1 WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = 'Lazer');
   `);
+  try {
+      db.execSync("ALTER TABLE profiles ADD COLUMN user_id INTEGER;");
+    } catch (e) { /* Coluna já existe */ }
+  };
+
+// --- AUTH LOCAL (SQLite) ---
+
+export const registerUserLocal = (name: string, email: string, hash: string, serverId?: number) => {
+  try {
+    db.runSync(
+      `INSERT INTO users (name, email, password_hash, server_id, sync_preference) 
+       VALUES (?, ?, ?, ?, 'ask')`,
+      [name, email, hash, serverId || null]
+    );
+    return getUserByEmail(email);
+  } catch (e) {
+    console.error("Erro ao registrar localmente", e);
+    throw e;
+  }
+};
+
+export const loginUserLocal = (email: string, hash: string): User | null => {
+  return db.getFirstSync<User>(
+    'SELECT * FROM users WHERE email = ? AND password_hash = ?',
+    [email, hash]
+  );
+};
+
+export const getUserByEmail = (email: string): User | null => {
+  return db.getFirstSync<User>('SELECT * FROM users WHERE email = ?', [email]);
+};
+
+export const updateUserSyncPref = (
+  userId: number, 
+  pref: 'cloud' | 'local' | 'ask', 
+  serverId?: number
+) => {
+  let query = 'UPDATE users SET sync_preference = ?';
+  const params: any[] = [pref];
+  
+  if (serverId) {
+    query += ', server_id = ?';
+    params.push(serverId);
+  }
+  
+  query += ' WHERE id = ?';
+  params.push(userId);
+  
+  db.runSync(query, params);
 };
 
 // --- SYNC ---

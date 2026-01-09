@@ -32,6 +32,11 @@ app.post('/api/sync', async (req, res) => {
     return res.status(400).json({ error: 'Formato inválido' });
   }
 
+  // Verificação de segurança básica
+  if (!userId) {
+      return res.status(400).json({ error: 'ID do usuário não fornecido.' });
+  }
+
   const connection = await pool.getConnection();
 
   try {
@@ -40,8 +45,10 @@ app.post('/api/sync', async (req, res) => {
     const syncedIds: string[] = [];
 
     for (const tx of transactions) {
-      // Lógica "Upsert": Se o UUID já existe, atualiza. Se não, cria.
-      // Isso evita duplicidade se o usuário enviar a mesma transação 2x por falha de rede.
+      // CORREÇÃO: Converter type para Maiúsculo para bater com o ENUM(INCOME, EXPENSE) do banco
+      // 
+      const upperType = tx.type ? tx.type.toUpperCase() : 'EXPENSE';
+
       const query = `
         INSERT INTO transactions 
         (user_id, description, amount, type, date, category, client_uuid, last_modified_at)
@@ -56,10 +63,10 @@ app.post('/api/sync', async (req, res) => {
       `;
 
       await connection.execute(query, [
-        userId || 1, // Temporário: Em produção pegue do token de auth
+        userId, 
         tx.description,
         tx.amount,
-        tx.type,
+        upperType, // Usando o tipo tratado
         new Date(tx.date),
         tx.category,
         tx.client_uuid,
@@ -70,16 +77,60 @@ app.post('/api/sync', async (req, res) => {
     }
 
     await connection.commit();
+    console.log(`Sync sucesso: ${syncedIds.length} transações salvas para user ${userId}`);
     
-    // Retorna para o App quais UUIDs foram salvos com sucesso
     res.json({ synced: syncedIds });
 
-  } catch (error) {
+  } catch (error: any) {
     await connection.rollback();
-    console.error('Erro no sync:', error);
-    res.status(500).json({ error: 'Erro ao processar sincronização' });
+    // Importante: Isso vai mostrar no console do servidor o motivo exato (ex: FK constraint fails)
+    console.error('Erro CRÍTICO no sync:', error.message); 
+    res.status(500).json({ error: 'Erro ao processar sincronização: ' + error.message });
   } finally {
     connection.release();
+  }
+});
+
+// Rota de Registro
+app.post('/api/auth/register', async (req, res) => {
+  const { name, email, password } = req.body;
+  // NOTA: Em produção, usar bcrypt para hashear a senha antes de salvar!
+  // Aqui estamos salvando texto plano apenas para o exemplo "simples" pedido,
+  // mas o código local (app) enviará o hash se você implementar crypto no front.
+  
+  try {
+    const [existing]: any = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
+    if (existing.length > 0) {
+      return res.status(409).json({ error: 'Email já cadastrado' });
+    }
+
+    const [result]: any = await pool.execute(
+      'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
+      [name, email, password]
+    );
+    
+    res.json({ id: result.insertId, name, email });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+
+// Rota de Login
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const [rows]: any = await pool.execute(
+      'SELECT id, name, email FROM users WHERE email = ? AND password = ?', 
+      [email, password]
+    );
+
+    if (rows.length > 0) {
+      res.json(rows[0]);
+    } else {
+      res.status(401).json({ error: 'Credenciais inválidas' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 

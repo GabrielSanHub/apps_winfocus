@@ -10,7 +10,7 @@ import {
   getPendingTransactionsDB, 
   markAsSyncedDB,
   getProfilesDB,
-  Profile 
+  Profile, registerUserLocal, loginUserLocal, updateUserSyncPref, User, getUserByEmail
 } from '../database/db';
 
 const SERVER_IP: string = '192.168.15.11'; 
@@ -22,8 +22,17 @@ const API_URL = Platform.OS === 'android' && SERVER_IP === 'localhost'
 interface FinanceStore {
   transactions: Transaction[];
   profiles: Profile[]; 
-  currentProfile: Profile | null; 
+  currentProfile: Profile | null;
+
+  user: User | null;
+  syncStatus: 'synced' | 'pending' | 'error' | 'offline';
   
+  login: (email: string, pass: string) => Promise<boolean>;
+  register: (name: string, email: string, pass: string) => Promise<boolean>;
+  logout: () => void;
+  setSyncPreference: (pref: 'cloud' | 'local' | 'ask') => Promise<void>;
+  checkSyncStatus: () => void;
+
   loadTransactions: () => void;
   addTransaction: (transaction: Omit<Transaction, 'id' | 'client_uuid' | 'sync_status'>) => Promise<void>;
   syncData: () => Promise<void>;
@@ -46,6 +55,119 @@ export const useFinanceStore = create<FinanceStore>((set, get) => ({
   profiles: [],
   currentProfile: null,
   themeMode: 'system',
+
+  user: null,
+  syncStatus: 'offline',
+
+login: async (email, password) => {
+    // 1. Tenta Login Online
+    try {
+      const res = await fetch(`${API_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      
+      if (res.ok) {
+        const serverUser = await res.json();
+        
+        // Busca usuário local
+        let localUser = getUserByEmail(email);
+        
+        if (!localUser) {
+           // Se não existe localmente, cria já com o ID do servidor
+           localUser = registerUserLocal(serverUser.name, email, password, serverUser.id);
+        } else {
+           // Se já existe, atualiza o ID do servidor no banco local
+           updateUserSyncPref(localUser.id, localUser.sync_preference, serverUser.id);
+           
+           // CORREÇÃO: Atualiza o objeto em memória também!
+           localUser = { ...localUser, server_id: serverUser.id }; 
+        }
+
+        // Agora salvamos no estado o usuário COM o server_id
+        set({ user: localUser, syncStatus: 'synced' });
+        get().loadProfiles(); 
+        return true;
+      }
+    } catch (e) {
+      console.log('Login Online falhou, tentando offline...', e);
+    }
+
+    // 2. Fallback Login Offline (SQLite)
+    const localUser = loginUserLocal(email, password);
+    if (localUser) {
+      set({ user: localUser, syncStatus: 'offline' });
+      get().loadProfiles();
+      get().checkSyncStatus(); 
+      return true;
+    }
+
+    return false;
+  },
+
+  register: async (name, email, password) => {
+    // Tenta registrar na nuvem primeiro
+    let serverId = undefined;
+    try {
+      const res = await fetch(`${API_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        serverId = data.id;
+      }
+    } catch (e) {
+      console.log('Registro Offline (sem rede)');
+    }
+
+    // Salva no SQLite
+    try {
+      const newUser = registerUserLocal(name, email, password, serverId);
+      set({ user: newUser });
+      
+      // Cria perfil padrão para o novo usuário
+      // (Lógica de criar perfil deve ser atualizada para aceitar user_id)
+      
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  setSyncPreference: async (pref) => {
+    const { user, syncData } = get();
+    if (!user) return;
+    
+    updateUserSyncPref(user.id, pref);
+    set({ user: { ...user, sync_preference: pref } });
+
+    if (pref === 'cloud') {
+      await syncData(); // Força sincronização imediata
+    }
+    get().checkSyncStatus();
+  },
+
+  checkSyncStatus: () => {
+    const pending = getPendingTransactionsDB();
+    const { user } = get();
+    
+    if (!user) return;
+    
+    if (user.sync_preference === 'ask') {
+        // Cor Cinza é gerida pelo componente visual se status for null ou especifico
+    } else if (pending.length > 0) {
+        set({ syncStatus: 'pending' }); // Amarelo
+    } else {
+        set({ syncStatus: 'synced' }); // Verde
+    }
+  },
+  
+  logout: () => {
+    set({ user: null, currentProfile: null, transactions: [] });
+  },
 
   loadTransactions: () => {
     try {
@@ -72,15 +194,29 @@ export const useFinanceStore = create<FinanceStore>((set, get) => ({
     get().syncData(); 
   },
 
-  syncData: async () => {
+syncData: async () => {
     try {
       const pending = getPendingTransactionsDB();
       if (pending.length === 0) return;
 
+      // CORREÇÃO 1: Pegar o ID real do usuário logado (server_id)
+      const { user } = get();
+      const targetUserId = user?.server_id;
+
+      if (!targetUserId) {
+        console.error("Erro no Sync: Usuário não possui ID do servidor vinculado.");
+        return;
+      }
+
+      console.log(`Iniciando sincronização para user ${targetUserId} com ${pending.length} itens.`);
+
       const response = await fetch(`${API_URL}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transactions: pending, userId: 1 }),
+        body: JSON.stringify({ 
+            transactions: pending, 
+            userId: targetUserId // Usa o ID dinâmico
+        }),
       });
 
       if (response.ok) {
@@ -88,10 +224,18 @@ export const useFinanceStore = create<FinanceStore>((set, get) => ({
         if (data.synced?.length > 0) {
           markAsSyncedDB(data.synced);
           get().loadTransactions();
+          // Atualiza status visual
+          get().checkSyncStatus(); 
+          console.log('Sincronização concluída com sucesso.');
         }
+      } else {
+        // CORREÇÃO 2: Ler o erro que vem do backend
+        const errorText = await response.text();
+        console.error('Erro no Backend:', errorText);
       }
-    } catch {
-      console.log('Modo Offline: Dados salvos localmente.');
+    } catch (e) {
+      // CORREÇÃO 3: Logar o erro real de rede/código
+      console.error('Erro de Conexão/Sync:', e);
     }
   },
 

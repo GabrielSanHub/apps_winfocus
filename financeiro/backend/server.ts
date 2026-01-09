@@ -95,9 +95,6 @@ app.post('/api/sync', async (req, res) => {
 // Rota de Registro
 app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body;
-  // NOTA: Em produção, usar bcrypt para hashear a senha antes de salvar!
-  // Aqui estamos salvando texto plano apenas para o exemplo "simples" pedido,
-  // mas o código local (app) enviará o hash se você implementar crypto no front.
   
   try {
     const [existing]: any = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
@@ -111,8 +108,10 @@ app.post('/api/auth/register', async (req, res) => {
     );
     
     res.json({ id: result.insertId, name, email });
-  } catch (error) {
-    res.status(500).json({ error: 'Erro no servidor' });
+} catch (error: any) {
+    console.error('ERRO REAL DO BANCO:', error.message); // Mostra no terminal do Docker
+    // Devolve o erro detalhado para o App (Frontend)
+    res.status(500).json({ error: 'Erro detalhado: ' + error.message });
   }
 });
 
@@ -141,7 +140,6 @@ const startServer = async () => {
     console.log('✅ BANCO DE DADOS CONECTADO COM SUCESSO!');
     connection.release();
 
-    // Só inicia o Express se o banco funcionar
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
       console.log(`🚀 Servidor rodando na porta ${PORT}`);
@@ -151,15 +149,8 @@ const startServer = async () => {
   } catch (err: any) {
     console.error('❌ ERRO FATAL: O servidor não iniciou porque o banco de dados falhou.');
     console.error('MOTIVO:', err.message);
-    if (err.code === 'ECONNREFUSED') console.error('-> Verifique o IP e a Porta.');
-    if (err.code === 'ER_ACCESS_DENIED_ERROR') console.error('-> Verifique Usuário e Senha.');
-    process.exit(1); // Encerra o processo com erro
+    process.exit(1);
   }
 };
 
 startServer();
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Backend rodando na porta ${PORT}`);
-});
